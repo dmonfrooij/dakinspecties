@@ -7,15 +7,14 @@ import traceback
 from datetime import date
 
 import flet as ft
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.platypus import HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from branding_settings import BrandingSettings, load_branding_settings, save_branding_settings
+from pdf_report_common import build_pdf_report
 
 
 BASE_DIR = os.path.dirname(__file__)
 COUNTER_FILE = os.path.join(BASE_DIR, "project_counter.json")
+IMAGE_FIT_CONTAIN = getattr(getattr(ft, "ImageFit", None), "CONTAIN", "contain")
 
 
 def next_rapportnummer() -> str:
@@ -63,7 +62,7 @@ def mark_used_rapportnummer(value: str) -> None:
 class CrossPlatformApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.page.title = "Dakinspecties - Cross-platform"
+        self.page.title = "Dakinspecties"
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.scroll = ft.ScrollMode.HIDDEN
         self.page.padding = 12
@@ -79,8 +78,9 @@ class CrossPlatformApp:
         self._configure_window()
 
         self._active_tab = 0
-        self._mobile_breakpoint = 760
-        self._tab_labels = ["Algemeen", "Inspectieresultaten", "Foto's", "Samenvatting", "Conclusie"]
+        self._mobile_breakpoint = 900
+        self._tab_labels = ["Algemeen", "Inspectieresultaten", "Foto's", "Samenvatting", "Conclusie", "Instellingen"]
+        self._branding = load_branding_settings(BASE_DIR)
 
         self.file_picker = ft.FilePicker()
         self.save_picker = ft.FilePicker()
@@ -89,6 +89,72 @@ class CrossPlatformApp:
         self.page.on_resized = self._on_page_resized
 
         self.build_ui()
+
+    def _brand_name(self) -> str:
+        value = (self.company_name.value or "").strip()
+        return value or "Dakinspecties"
+
+    def _brand_logo_path(self) -> str:
+        logo_path = (self.company_logo.value or "").strip()
+        if logo_path and os.path.exists(logo_path):
+            return logo_path
+        fallback = os.path.join(BASE_DIR, "inspectie.png")
+        return fallback if os.path.exists(fallback) else ""
+
+    def _save_branding(self, completed: bool = True):
+        self._branding = BrandingSettings(
+            company_name=self._brand_name(),
+            logo_path=(self.company_logo.value or "").strip(),
+            setup_completed=completed,
+        )
+        save_branding_settings(BASE_DIR, self._branding)
+
+    def _new_image(self, width: int, height: int, visible: bool = False):
+        # Flet API differs between versions; always pass src to avoid constructor errors.
+        try:
+            return ft.Image(src="", width=width, height=height, fit=IMAGE_FIT_CONTAIN, visible=visible)
+        except TypeError:
+            return ft.Image("", width=width, height=height, fit=IMAGE_FIT_CONTAIN, visible=visible)
+
+    def _apply_branding_ui(self):
+        company = self._brand_name()
+        logo_path = self._brand_logo_path()
+        self.page.title = "Dakinspecties"
+        self.branding_title.value = f"{company} - Dakinspecties"
+        self.branding_logo.src = logo_path
+        self.branding_logo.visible = bool(logo_path)
+        if hasattr(self, "branding_logo_preview"):
+            self.branding_logo_preview.src = logo_path
+            self.branding_logo_preview.visible = bool(logo_path)
+        if hasattr(self, "branding_name_preview"):
+            self.branding_name_preview.value = company
+
+    async def _pick_company_logo(self, e=None):
+        files = await self._resolve_picker_result(
+            self.file_picker.pick_files(allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg", "bmp", "gif"])
+        )
+        if files:
+            self.company_logo.value = files[0].path
+            self._apply_branding_ui()
+            self.page.update()
+
+    def _save_branding_action(self, e=None):
+        self._save_branding(completed=True)
+        self._apply_branding_ui()
+        self.notify("Bedrijfsprofiel opgeslagen")
+
+    def _reset_branding_action(self, e=None):
+        defaults = BrandingSettings()
+        self.company_name.value = defaults.company_name
+        self.company_logo.value = defaults.logo_path
+        self._save_branding(completed=True)
+        self._apply_branding_ui()
+        self.page.update()
+        self.notify("Bedrijfsprofiel hersteld")
+
+    def _on_company_name_change(self, e):
+        self._apply_branding_ui()
+        self.page.update()
 
     def notify(self, msg: str):
         snack = ft.SnackBar(ft.Text(msg), open=True)
@@ -111,7 +177,7 @@ class CrossPlatformApp:
         try:
             if getattr(self.page, "window", None):
                 self.page.window.width = 1200
-                self.page.window.height = 860
+                self.page.window.height = 800
         except Exception:
             pass
 
@@ -192,6 +258,19 @@ class CrossPlatformApp:
         )
 
     def build_ui(self):
+        self.company_name = ft.TextField(
+            label="Bedrijfsnaam",
+            value=self._branding.company_name,
+            width=320,
+            on_change=self._on_company_name_change,
+        )
+        self.company_logo = ft.TextField(
+            label="Logo pad",
+            value=self._branding.logo_path,
+            read_only=True,
+            expand=True,
+        )
+
         self.rapportnummer = ft.TextField(label="Rapportnummer", value=next_rapportnummer(), width=260)
         self.datum = ft.TextField(label="Datum inspectie", value=date.today().strftime("%d %B %Y"), width=260)
         self.operator = ft.TextField(label="Operator", width=260)
@@ -238,11 +317,11 @@ class CrossPlatformApp:
         ]
 
         self.result_titles = [
-            "4.1 Dakbedekking & Oppervlakte",
-            "4.2 Naden en Lasverbindingen",
-            "4.3 Randafwerking & Trimmen",
-            "4.4 Hemelwaterafvoer (HWA) & Goot",
-            "4.5 Dakdoorvoeren & Aansluitingen",
+            "2.1 Dakbedekking & Oppervlakte",
+            "2.2 Naden en Lasverbindingen",
+            "2.3 Randafwerking & Trimmen",
+            "2.4 Hemelwaterafvoer (HWA) & Goot",
+            "2.5 Dakdoorvoeren & Aansluitingen",
         ]
         self.result_controls = []
         for title in self.result_titles:
@@ -279,6 +358,7 @@ class CrossPlatformApp:
             self.tab_fotos(),
             self.tab_samenvatting(),
             self.tab_conclusie(),
+            self.tab_instellingen(),
         ]
 
         self._tab_buttons = []
@@ -313,9 +393,13 @@ class CrossPlatformApp:
             bgcolor=ft.Colors.BLUE_GREY_800,
         )
 
+        self.branding_logo = self._new_image(width=140, height=44, visible=False)
+        self.branding_title = ft.Text("Dakinspecties", size=24, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+
         actions = ft.Row(
             [
                 self.rapport_type,
+                ft.Button("Bedrijfsprofiel opslaan", on_click=self._save_branding_action),
                 ft.Button("Nieuw", on_click=self.new_project),
                 ft.Button("Open project", on_click=self.open_project),
                 ft.Button("Opslaan project", on_click=self.save_project),
@@ -326,7 +410,7 @@ class CrossPlatformApp:
         )
         header = ft.Column(
             [
-                ft.Text("Dakinspecties - Cross-platform", size=24, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ft.Row([self.branding_logo, self.branding_title], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 actions,
             ],
             spacing=8,
@@ -345,6 +429,9 @@ class CrossPlatformApp:
             spacing=0,
         )
         self.page.add(layout)
+        self._apply_branding_ui()
+        if not self._branding.setup_completed:
+            self.notify("Stel bij eerste gebruik bovenaan je bedrijfsnaam en logo in en klik op 'Bedrijfsprofiel opslaan'.")
         self._apply_rapport_type_labels()
         self._apply_responsive_layout()
 
@@ -356,6 +443,23 @@ class CrossPlatformApp:
             ft.Row([self.postcode, self.telefoon], wrap=True),
             ft.Row([self.type_object, self.dakbedekking], wrap=True),
             ft.Row([self.bouwjaar, self.oppervlakte], wrap=True),
+        ])
+
+    def tab_instellingen(self):
+        self.branding_logo_preview = self._new_image(width=220, height=90, visible=False)
+        self.branding_name_preview = ft.Text("Dakinspecties", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+        return self._tab_shell([
+            ft.Text("Bedrijfsprofiel", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            self.company_name,
+            ft.Row([self.company_logo, ft.Button("Kies logo", on_click=self._pick_company_logo)], wrap=True),
+            ft.Row([
+                ft.Button("Opslaan", on_click=self._save_branding_action, bgcolor=ft.Colors.PRIMARY, color=ft.Colors.ON_PRIMARY),
+                ft.Button("Reset", on_click=self._reset_branding_action),
+            ]),
+            ft.Divider(height=10),
+            ft.Text("Preview", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            self.branding_name_preview,
+            self.branding_logo_preview,
         ])
 
     def _make_pick_handler(self, target: ft.TextField):
@@ -736,223 +840,50 @@ class CrossPlatformApp:
             except Exception:
                 pass
 
-    def _build_pdf_inspectie(self, filepath: str):
-        W_PAGE, _ = A4
-        margin = 2 * cm
-        usable_w = W_PAGE - 2 * margin
-        doc = SimpleDocTemplate(filepath, pagesize=A4, leftMargin=margin, rightMargin=margin, topMargin=margin, bottomMargin=margin)
-
-        def S(name, **kw):
-            return ParagraphStyle(name, **kw)
-
-        h2 = S("H2", fontSize=11, fontName="Helvetica-Bold", textColor=colors.HexColor("#1f2d3d"), spaceBefore=8, spaceAfter=2)
-        n = S("N", fontSize=9, fontName="Helvetica", leading=13)
-
-        story = []
-
-        logo_path = os.path.join(BASE_DIR, "inspectie.png")
-        left = Image(logo_path, width=9 * cm, height=2.0 * cm, kind="proportional") if os.path.exists(logo_path) else Paragraph("<b>DAKINSPECTIES</b>", n)
-        hdr = Table(
-            [
-                [left, Paragraph(f"<b>Rapportnummer:</b> {self.rapportnummer.value}", n)],
-                [Paragraph("Drone Inspectierapport", n), Paragraph(f"<b>Datum:</b> {self.datum.value}", n)],
-                ["", Paragraph(f"<b>Operator:</b> {self.operator.value}", n)],
+    def _pdf_payload(self) -> dict:
+        return {
+            "rapport_type": self.rapport_type.value,
+            "company_name": self._brand_name(),
+            "logo_path": self._brand_logo_path(),
+            "rapportnummer": self.rapportnummer.value,
+            "datum": self.datum.value,
+            "operator": self.operator.value,
+            "opdrachtgever": self.opdrachtgever.value,
+            "adres": self.adres.value,
+            "postcode": self.postcode.value,
+            "telefoon": self.telefoon.value,
+            "type_object": self.type_object.value,
+            "dakbedekking": self.dakbedekking.value,
+            "bouwjaar": self.bouwjaar.value,
+            "oppervlakte": self.oppervlakte.value,
+            "status_algemeen": self.status_algemeen.value,
+            "samenvatting": self.samenvatting.value,
+            "scores": [(label, ctrl.value) for label, ctrl in self.score_controls],
+            "resultaten": [
+                {
+                    "title": title,
+                    "omschrijving": oms.value,
+                    "status": stat.value,
+                    "foto": foto.value,
+                }
+                for title, oms, stat, foto in self.result_controls
             ],
-            colWidths=[10 * cm, usable_w - 10 * cm],
-        )
-        hdr.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#1f2d3d")),
-            ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
-            ("BACKGROUND", (1, 0), (1, -1), colors.HexColor("#f1f4f7")),
-            ("PADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.extend([hdr, Spacer(1, 0.35 * cm)])
+            "foto_items": self._collect_foto_items(),
+            "advies_kort": self.advies_kort.value,
+            "advies_middel": self.advies_middel.value,
+            "advies_periodiek": self.advies_periodiek.value,
+        }
 
-        story.append(Paragraph("1. Project- en klantgegevens", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        kv_rows = [
-            ["Opdrachtgever", self.opdrachtgever.value, "Type object", self.type_object.value],
-            ["Adres", self.adres.value, "Dakbedekking", self.dakbedekking.value],
-            ["Postcode/Plaats", self.postcode.value, "Bouwjaar", self.bouwjaar.value],
-            ["Telefoon", self.telefoon.value, "Oppervlakte", f"{self.oppervlakte.value} m2"],
-        ]
-        kv = Table(kv_rows, colWidths=[3.2 * cm, 5.0 * cm, 3.2 * cm, usable_w - 11.4 * cm])
-        kv.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0da")),
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#dbe3ec")),
-            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#dbe3ec")),
-            ("PADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.extend([kv, Spacer(1, 0.3 * cm)])
-
-        story.append(Paragraph("2. Samenvatting", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        story.append(Paragraph(f"<b>Status:</b> {self.status_algemeen.value}", n))
-        story.append(Paragraph(self.samenvatting.value or "-", n))
-        story.append(Spacer(1, 0.2 * cm))
-
-        score_rows = [["Onderdeel", "Score"]] + [[name, ctrl.value] for name, ctrl in self.score_controls]
-        st = Table(score_rows, colWidths=[usable_w - 3 * cm, 3 * cm])
-        st.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0da")),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#32465a")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("PADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.extend([st, Spacer(1, 0.3 * cm)])
-
-        story.append(Paragraph("3. Inspectieresultaten", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        for title, oms, stat, foto in self.result_controls:
-            story.append(Paragraph(f"<b>{title}</b>", n))
-            story.append(Paragraph(oms.value or "-", n))
-            story.append(Paragraph(f"Status: {stat.value}", n))
-            if foto.value and os.path.exists(foto.value):
-                try:
-                    story.append(Image(foto.value, width=9 * cm, height=6 * cm, kind="proportional"))
-                except Exception:
-                    pass
-            story.append(Spacer(1, 0.15 * cm))
-
-        story.append(Paragraph("4. Foto bijlage", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        for foto in self._collect_foto_items():
-            fpath = foto.get("path", "")
-            cap = foto.get("caption", "")
-            if fpath and os.path.exists(fpath):
-                try:
-                    story.append(Image(fpath, width=8.5 * cm, height=5.5 * cm, kind="proportional"))
-                except Exception:
-                    pass
-            story.append(Paragraph(cap or "-", n))
-            story.append(Spacer(1, 0.15 * cm))
-
-        story.append(Paragraph("5. Conclusie en advies", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        story.append(Paragraph(f"<b>Korte termijn:</b> {self.advies_kort.value or '-'}", n))
-        story.append(Paragraph(f"<b>Middellange termijn:</b> {self.advies_middel.value or '-'}", n))
-        story.append(Paragraph(f"<b>Periodiek:</b> {self.advies_periodiek.value or '-'}", n))
-
-        doc.build(story)
+    def _build_pdf_inspectie(self, filepath: str):
+        payload = self._pdf_payload()
+        payload["rapport_type"] = "Inspectierapport"
+        build_pdf_report(filepath, payload)
         mark_used_rapportnummer(self.rapportnummer.value)
 
     def _build_pdf_oplever(self, filepath: str):
-        W_PAGE, _ = A4
-        margin = 2 * cm
-        usable_w = W_PAGE - 2 * margin
-        doc = SimpleDocTemplate(filepath, pagesize=A4, leftMargin=margin, rightMargin=margin, topMargin=margin, bottomMargin=margin)
-
-        def S(name, **kw):
-            return ParagraphStyle(name, **kw)
-
-        h2 = S("H2", fontSize=11, fontName="Helvetica-Bold", textColor=colors.HexColor("#1f2d3d"), spaceBefore=8, spaceAfter=2)
-        n = S("N", fontSize=9, fontName="Helvetica", leading=13)
-        story = []
-
-        logo_path = os.path.join(BASE_DIR, "inspectie.png")
-        left = Image(logo_path, width=9 * cm, height=2.0 * cm, kind="proportional") if os.path.exists(logo_path) else Paragraph("<b>DAKINSPECTIES</b>", n)
-        hdr = Table(
-            [
-                [left, Paragraph(f"<b>Rapportnummer:</b> {self.rapportnummer.value}", n)],
-                [Paragraph("Dak Opleverrapport", n), Paragraph(f"<b>Datum oplevering:</b> {self.datum.value}", n)],
-                ["", Paragraph(f"<b>Inspecteur:</b> {self.operator.value}", n)],
-            ],
-            colWidths=[10 * cm, usable_w - 10 * cm],
-        )
-        hdr.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#1f2d3d")),
-            ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
-            ("BACKGROUND", (1, 0), (1, -1), colors.HexColor("#f1f4f7")),
-            ("PADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.extend([hdr, Spacer(1, 0.35 * cm)])
-
-        story.append(Paragraph("1. Project- en oplevergegevens", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        info_rows = [
-            ["Opdrachtgever", self.opdrachtgever.value, "Type object", self.type_object.value],
-            ["Adres", self.adres.value, "Dakbedekking", self.dakbedekking.value],
-            ["Postcode/Plaats", self.postcode.value, "Bouwjaar", self.bouwjaar.value],
-            ["Telefoon", self.telefoon.value, "Oppervlakte", f"{self.oppervlakte.value} m2"],
-        ]
-        info_tbl = Table(info_rows, colWidths=[3.2 * cm, 5.0 * cm, 3.2 * cm, usable_w - 11.4 * cm])
-        info_tbl.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0da")),
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#dbe3ec")),
-            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#dbe3ec")),
-            ("PADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.extend([info_tbl, Spacer(1, 0.25 * cm)])
-
-        story.append(Paragraph("2. Oplevercheck per onderdeel", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        check_rows = [["Onderdeel", "Resultaat", "Opm. / bevinding"]]
-        for title, oms, stat, _ in self.result_controls:
-            conclusie = "Goedgekeurd" if stat.value in ("Akkoord", "Akkoord (lichte vervuiling)") else "Herstelpunt"
-            check_rows.append([title, conclusie, oms.value or "-"])
-        check_tbl = Table(check_rows, colWidths=[6.2 * cm, 3.0 * cm, usable_w - 9.2 * cm])
-        check_tbl.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0da")),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#32465a")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("PADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.extend([check_tbl, Spacer(1, 0.25 * cm)])
-
-        story.append(Paragraph("3. Restpunten en acties", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        restpunten = []
-        for title, oms, stat, _ in self.result_controls:
-            if stat.value in ("Aandachtspunt", "Directe actie vereist", "Kritiek"):
-                restpunten.append((title, stat.value, oms.value or "-") )
-
-        if not restpunten:
-            story.append(Paragraph("Geen restpunten geconstateerd. Dakwerk is akkoord opgeleverd.", n))
-        else:
-            rp_rows = [["Onderdeel", "Prioriteit", "Actie"]]
-            for title, status, oms in restpunten:
-                rp_rows.append([title, status, oms])
-            rp_tbl = Table(rp_rows, colWidths=[6.2 * cm, 3.2 * cm, usable_w - 9.4 * cm])
-            rp_tbl.setStyle(TableStyle([
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0da")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#32465a")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("PADDING", (0, 0), (-1, -1), 6),
-            ]))
-            story.append(rp_tbl)
-        story.append(Spacer(1, 0.25 * cm))
-
-        story.append(Paragraph("4. Fotoverslag", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        for title, _, _, foto in self.result_controls:
-            if foto.value and os.path.exists(foto.value):
-                try:
-                    story.append(Paragraph(f"<b>{title}</b>", n))
-                    story.append(Image(foto.value, width=8.5 * cm, height=5.5 * cm, kind="proportional"))
-                    story.append(Spacer(1, 0.1 * cm))
-                except Exception:
-                    pass
-        for foto in self._collect_foto_items():
-            fpath = foto.get("path", "")
-            cap = foto.get("caption", "")
-            if fpath and os.path.exists(fpath):
-                try:
-                    story.append(Image(fpath, width=8.5 * cm, height=5.5 * cm, kind="proportional"))
-                except Exception:
-                    pass
-            story.append(Paragraph(cap or "-", n))
-            story.append(Spacer(1, 0.15 * cm))
-
-        story.append(Paragraph("5. Opleverconclusie", h2))
-        story.append(HRFlowable(width=usable_w, thickness=1, color=colors.HexColor("#32465a")))
-        story.append(Paragraph(f"<b>Algemene status:</b> {self.status_algemeen.value}", n))
-        story.append(Paragraph(f"<b>Toelichting:</b> {self.samenvatting.value or '-'}", n))
-        story.append(Spacer(1, 0.1 * cm))
-        story.append(Paragraph(f"<b>Actie korte termijn:</b> {self.advies_kort.value or '-'}", n))
-        story.append(Paragraph(f"<b>Actie middellange termijn:</b> {self.advies_middel.value or '-'}", n))
-        story.append(Paragraph(f"<b>Onderhoudsadvies:</b> {self.advies_periodiek.value or '-'}", n))
-
-        doc.build(story)
+        payload = self._pdf_payload()
+        payload["rapport_type"] = "Opleverrapport"
+        build_pdf_report(filepath, payload)
         mark_used_rapportnummer(self.rapportnummer.value)
 
 

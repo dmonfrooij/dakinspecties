@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from datetime import date
 import os
 import threading
@@ -8,13 +8,8 @@ import json
 import re
 from collections import deque
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import cm
-from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
-                                TableStyle, Image, HRFlowable)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+from branding_settings import BrandingSettings, load_branding_settings, save_branding_settings
+from pdf_report_common import build_pdf_report
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,9 +212,13 @@ def tab_frame(notebook, title):
 class DakInspectieApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Dakwerk Sterken - Rapport Generator")
-        self.root.geometry("1280x860")
-        self.root.minsize(1100, 760)
+        self._branding = load_branding_settings(os.path.dirname(__file__))
+        self.company_name_var = tk.StringVar(value=self._branding.company_name)
+        self.company_logo_path = self._branding.logo_path
+
+        self.root.title("Dakinspecties")
+        self.root.geometry("1180x780")
+        self.root.minsize(980, 680)
         self.root.resizable(True, True)
 
         self._ui_bg = "#0f172a"
@@ -242,23 +241,113 @@ class DakInspectieApp:
         self.ai_classificatie = tk.StringVar(value="Nog niet geanalyseerd")
         self.ai_uitleg = tk.StringVar(value="Upload een dakfoto en klik op 'Analyseer foto'.")
         self.resultaat_kopjes = [
-            "4.1  Dakbedekking & Oppervlakte",
-            "4.2  Naden en Lasverbindingen",
-            "4.3  Randafwerking & Trimmen",
-            "4.4  Hemelwaterafvoer (HWA) & Goot",
-            "4.5  Dakdoorvoeren & Aansluitingen",
+            "2.1  Dakbedekking & Oppervlakte",
+            "2.2  Naden en Lasverbindingen",
+            "2.3  Randafwerking & Trimmen",
+            "2.4  Hemelwaterafvoer (HWA) & Goot",
+            "2.5  Dakdoorvoeren & Aansluitingen",
         ]
         self.ai_target_kopje = tk.StringVar(value=self.resultaat_kopjes[0])
         self.ai_daktype_var = tk.StringVar(value="Auto (uit projectgegevens)")
         self.ai_profiel_var = tk.StringVar(value="Gebalanceerd")
         self.ai_sensitivity_var = tk.IntVar(value=50)
-        self.ai_auto_place_var = tk.BooleanVar(value=True)
-        self.ai_use_overlay_var = tk.BooleanVar(value=True)
+        self.ai_auto_place_var = tk.BooleanVar(value=False)
+        self.ai_use_overlay_var = tk.BooleanVar(value=False)
         self.kaart_path: str | None = None   # gegenereerde kaartafbeelding
         self._kaart_tk_img = None            # tkinter PhotoImage referentie
         self._ai_tk_img = None
 
         self._build_ui()
+        self._refresh_branding_ui()
+        self._ensure_branding_setup()
+
+    def _company_name(self):
+        return (self.company_name_var.get() or "").strip() or "Dakinspecties"
+
+    def _company_logo(self):
+        logo = (self.company_logo_path or "").strip()
+        if logo and os.path.exists(logo):
+            return logo
+        fallback = os.path.join(os.path.dirname(__file__), "inspectie.png")
+        return fallback if os.path.exists(fallback) else ""
+
+    def _save_branding(self, completed=True):
+        self._branding = BrandingSettings(
+            company_name=self._company_name(),
+            logo_path=(self.company_logo_path or "").strip(),
+            setup_completed=bool(completed),
+        )
+        save_branding_settings(os.path.dirname(__file__), self._branding)
+
+    def _choose_logo_file(self):
+        logo = filedialog.askopenfilename(
+            title="Kies bedrijfslogo",
+            filetypes=[("Afbeeldingen", "*.png *.jpg *.jpeg *.bmp *.gif")],
+        )
+        if logo:
+            self.company_logo_path = logo
+
+    def _open_branding_settings(self):
+        name = simpledialog.askstring(
+            "Bedrijfsnaam",
+            "Voer de bedrijfsnaam in:",
+            initialvalue=self._company_name(),
+            parent=self.root,
+        )
+        if name is not None:
+            self.company_name_var.set(name.strip() or "Dakinspecties")
+
+        if messagebox.askyesno("Bedrijfslogo", "Wil je een bedrijfslogo kiezen?", parent=self.root):
+            self._choose_logo_file()
+
+        self._save_branding(completed=True)
+        self._refresh_branding_ui()
+
+    def _ensure_branding_setup(self):
+        if self._branding.setup_completed:
+            return
+        self._open_branding_settings()
+
+    def _refresh_branding_ui(self):
+        company = self._company_name()
+        self.root.title("Dakinspecties")
+
+        if hasattr(self, "_banner_title_var"):
+            self._banner_title_var.set(company)
+        if hasattr(self, "_bedrijf_naam_var"):
+            self._bedrijf_naam_var.set(company)
+        if hasattr(self, "_instellingen_bedrijf_naam_var"):
+            self._instellingen_bedrijf_naam_var.set(company)
+
+        if hasattr(self, "_logo_preview"):
+            logo = self._company_logo()
+            if logo and os.path.exists(logo):
+                try:
+                    from PIL import Image as PILImage, ImageTk
+                    pil = PILImage.open(logo).convert("RGBA")
+                    pil.thumbnail((170, 54))
+                    self._logo_tk = ImageTk.PhotoImage(pil)
+                    self._logo_preview.configure(image=self._logo_tk, text="")
+                except Exception:
+                    self._logo_preview.configure(image="", text="[ Logo niet leesbaar ]")
+            else:
+                self._logo_preview.configure(image="", text="[ Geen logo ]")
+
+        if hasattr(self, "_logo_preview_settings"):
+            logo = self._company_logo()
+            if logo and os.path.exists(logo):
+                try:
+                    from PIL import Image as PILImage, ImageTk
+                    pil = PILImage.open(logo).convert("RGBA")
+                    pil.thumbnail((240, 110))
+                    self._logo_tk_settings = ImageTk.PhotoImage(pil)
+                    self._logo_preview_settings.configure(image=self._logo_tk_settings, text="")
+                except Exception:
+                    self._logo_preview_settings.configure(image="", text="[ Logo niet leesbaar ]")
+            else:
+                self._logo_preview_settings.configure(image="", text="[ Geen logo ]")
+
+        self._apply_rapport_type_labels()
 
     def _next_rapportnummer(self):
         jaar = date.today().year
@@ -313,14 +402,25 @@ class DakInspectieApp:
 
         banner_left = tk.Frame(banner, bg=self._ui_bg)
         banner_left.pack(side="left", padx=8)
-        tk.Label(banner_left, text="DAKWERK STERKEN",
+        self._banner_title_var = tk.StringVar(value=self._company_name())
+        tk.Label(banner_left, textvariable=self._banner_title_var,
                  font=("Arial", 20, "bold"), fg=self._ui_fg, bg=self._ui_bg).pack(anchor="w")
         self._banner_subtitle_var = tk.StringVar(value="Drone inspectierapport generator")
         tk.Label(banner_left, textvariable=self._banner_subtitle_var,
                  font=("Arial", 11), fg=self._ui_muted, bg=self._ui_bg).pack(anchor="w")
+        self._logo_preview = tk.Label(
+            banner_left,
+            text="[ Geen logo ]",
+            font=("Arial", 9),
+            fg=self._ui_muted,
+            bg=self._ui_bg,
+            anchor="w",
+        )
+        self._logo_preview.pack(anchor="w", pady=(4, 0))
 
         tools = ttk.Frame(banner)
         tools.pack(side="right", padx=12, pady=6)
+        ttk.Button(tools, text="Bedrijf/Logo", command=self._open_branding_settings).pack(side="left", padx=(0, 8))
         ttk.Label(tools, text="Rapporttype:").pack(side="left", padx=(0, 6))
         self.rapport_type_combo = ttk.Combobox(
             tools,
@@ -350,6 +450,7 @@ class DakInspectieApp:
         self._tab_fotos()
         self._tab_samenvatting()
         self._tab_conclusie()
+        self._tab_instellingen()
         self._apply_rapport_type_labels()
 
 
@@ -372,7 +473,7 @@ class DakInspectieApp:
     def _apply_rapport_type_labels(self):
         is_oplever = self.rapport_type.get() == "Opleverrapport"
         self._banner_subtitle_var.set("Dak opleverrapport generator" if is_oplever else "Drone inspectierapport generator")
-        self.root.title("Dakwerk Sterken - Opleverrapport" if is_oplever else "Dakwerk Sterken - Inspectierapport")
+        self.root.title("Dakinspecties")
         if hasattr(self, "_datum_label_var"):
             self._datum_label_var.set("Datum Oplevering:" if is_oplever else "Datum Inspectie:")
         if hasattr(self, "_operator_label_var"):
@@ -423,9 +524,17 @@ class DakInspectieApp:
 
         self._section_label(tab, "Rapportgegevens", 0)
         self._separator(tab, 1)
-        self.rapportnummer = self._row_entry(tab, "Rapportnummer:", 2, self.default_rapportnummer)
+        self._bedrijf_naam_var = tk.StringVar(value=self._company_name())
+        tk.Label(tab, text="Bedrijfsnaam:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
+            row=2, column=0, sticky="w", padx=(12, 4), pady=4
+        )
+        ttk.Entry(tab, textvariable=self._bedrijf_naam_var, width=36).grid(row=2, column=1, sticky="w", padx=(0, 12), pady=4)
+        ttk.Button(tab, text="Opslaan bedrijf", command=self._save_bedrijf_from_tab).grid(row=2, column=2, sticky="w", padx=(12, 4), pady=4)
+        ttk.Button(tab, text="Kies logo", command=self._choose_logo_and_save).grid(row=2, column=3, sticky="w", padx=(0, 12), pady=4)
+
+        self.rapportnummer = self._row_entry(tab, "Rapportnummer:", 3, self.default_rapportnummer)
         tk.Label(tab, text="Rapporttype:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
-            row=2, column=2, sticky="w", padx=(12, 4), pady=4
+            row=3, column=2, sticky="w", padx=(12, 4), pady=4
         )
         self.rapport_type_tab_combo = ttk.Combobox(
             tab,
@@ -434,41 +543,41 @@ class DakInspectieApp:
             state="readonly",
             width=22,
         )
-        self.rapport_type_tab_combo.grid(row=2, column=3, sticky="w", padx=(0, 12), pady=4)
+        self.rapport_type_tab_combo.grid(row=3, column=3, sticky="w", padx=(0, 12), pady=4)
         self.rapport_type_tab_combo.bind("<<ComboboxSelected>>", self._on_rapport_type_change)
         self._datum_label_var = tk.StringVar(value="Datum Inspectie:")
         self._operator_label_var = tk.StringVar(value="Operator:")
         self.datum = self._row_entry(
             tab,
             "Datum Inspectie:",
-            3,
+            4,
             date.today().strftime("%d %B %Y"),
             label_var=self._datum_label_var,
         )
-        self.operator = self._row_entry(tab, "Operator:", 4, label_var=self._operator_label_var)
+        self.operator = self._row_entry(tab, "Operator:", 5, label_var=self._operator_label_var)
 
-        self._section_label(tab, "Klant- & Projectgegevens", 5)
-        self._separator(tab, 6)
+        self._section_label(tab, "Klant- & Projectgegevens", 6)
+        self._separator(tab, 7)
 
-        self.opdrachtgever = self._row_entry(tab, "Opdrachtgever:", 7)
-        self.adres = self._row_entry(tab, "Adres:", 8)
-        self.postcode = self._row_entry(tab, "Postcode / Plaats:", 9)
-        self.telefoon = self._row_entry(tab, "Telefoonnummer:", 10)
-        self.type_object = self._row_entry(tab, "Type Object:", 11)
-        self.dakbedekking = self._row_entry(tab, "Dakbedekking:", 12)
-        self.bouwjaar = self._row_entry(tab, "Bouwjaar:", 13)
-        self.oppervlakte = self._row_entry(tab, "Oppervlakte (m²):", 14)
+        self.opdrachtgever = self._row_entry(tab, "Opdrachtgever:", 8)
+        self.adres = self._row_entry(tab, "Adres:", 9)
+        self.postcode = self._row_entry(tab, "Postcode / Plaats:", 10)
+        self.telefoon = self._row_entry(tab, "Telefoonnummer:", 11)
+        self.type_object = self._row_entry(tab, "Type Object:", 12)
+        self.dakbedekking = self._row_entry(tab, "Dakbedekking:", 13)
+        self.bouwjaar = self._row_entry(tab, "Bouwjaar:", 14)
+        self.oppervlakte = self._row_entry(tab, "Oppervlakte (m²):", 15)
 
         # ── Kaart sectie ─────────────────────────────────────────────────────
-        self._section_label(tab, "Locatie opzoeken", 15)
-        self._separator(tab, 16)
+        self._section_label(tab, "Locatie opzoeken", 16)
+        self._separator(tab, 17)
 
         tk.Label(tab, text="Zoeken op adres:", font=("Arial", 10),
                  anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
-            row=17, column=0, sticky="w", padx=(12, 4), pady=4)
+            row=18, column=0, sticky="w", padx=(12, 4), pady=4)
 
         zoek_frame = ttk.Frame(tab)
-        zoek_frame.grid(row=17, column=1, columnspan=3, sticky="ew",
+        zoek_frame.grid(row=18, column=1, columnspan=3, sticky="ew",
                         padx=(0, 12), pady=4)
         self._zoek_var = tk.StringVar()
         zoek_entry = ttk.Entry(zoek_frame, textvariable=self._zoek_var, width=45)
@@ -480,7 +589,7 @@ class DakInspectieApp:
         self._kaart_status_var = tk.StringVar(value="")
         tk.Label(tab, textvariable=self._kaart_status_var,
                  font=("Arial", 9, "italic"), fg=self._ui_muted, bg=self._ui_bg).grid(
-            row=18, column=0, columnspan=4, sticky="w", padx=14, pady=1)
+            row=19, column=0, columnspan=4, sticky="w", padx=14, pady=1)
 
         # Kaartweergave
         self._kaart_label = tk.Label(
@@ -488,8 +597,72 @@ class DakInspectieApp:
             text="[ Kaart verschijnt hier na het zoeken ]",
             font=("Arial", 9), fg=self._ui_muted,
             width=62, height=8, relief="solid", bd=1)
-        self._kaart_label.grid(row=19, column=0, columnspan=4,
+        self._kaart_label.grid(row=20, column=0, columnspan=4,
                                padx=12, pady=(4, 12), sticky="w")
+
+    def _save_bedrijf_from_tab(self):
+        self.company_name_var.set((self._bedrijf_naam_var.get() or "").strip() or "Dakinspecties")
+        self._save_branding(completed=True)
+        self._refresh_branding_ui()
+
+    def _choose_logo_and_save(self):
+        self._choose_logo_file()
+        self._save_bedrijf_from_tab()
+
+    def _save_bedrijf_from_settings(self):
+        self.company_name_var.set((self._instellingen_bedrijf_naam_var.get() or "").strip() or "Dakinspecties")
+        self._save_branding(completed=True)
+        self._refresh_branding_ui()
+
+    def _choose_logo_and_save_settings(self):
+        self._choose_logo_file()
+        self._save_bedrijf_from_settings()
+
+    def _reset_branding_action(self):
+        self.company_name_var.set("Dakinspecties")
+        self.company_logo_path = ""
+        self._save_branding(completed=True)
+        self._refresh_branding_ui()
+
+    def _tab_instellingen(self):
+        tab = tab_frame(self.nb, "Instellingen")
+
+        self._section_label(tab, "Bedrijfsprofiel", 0)
+        self._separator(tab, 1)
+
+        self._instellingen_bedrijf_naam_var = tk.StringVar(value=self._company_name())
+        tk.Label(tab, text="Bedrijfsnaam:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
+            row=2, column=0, sticky="w", padx=(12, 4), pady=4
+        )
+        ttk.Entry(tab, textvariable=self._instellingen_bedrijf_naam_var, width=44).grid(
+            row=2, column=1, columnspan=2, sticky="w", padx=(0, 12), pady=4
+        )
+        ttk.Button(tab, text="Opslaan", command=self._save_bedrijf_from_settings).grid(
+            row=2, column=3, sticky="w", padx=(0, 12), pady=4
+        )
+
+        tk.Label(tab, text="Logo:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
+            row=3, column=0, sticky="w", padx=(12, 4), pady=4
+        )
+        ttk.Button(tab, text="Kies logo", command=self._choose_logo_and_save_settings).grid(
+            row=3, column=1, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Button(tab, text="Reset", command=self._reset_branding_action).grid(
+            row=3, column=2, sticky="w", padx=(0, 8), pady=4
+        )
+
+        self._logo_preview_settings = tk.Label(
+            tab,
+            bg=self._ui_card,
+            text="[ Geen logo ]",
+            font=("Arial", 9),
+            fg=self._ui_muted,
+            width=48,
+            height=6,
+            relief="solid",
+            bd=1,
+        )
+        self._logo_preview_settings.grid(row=4, column=0, columnspan=4, sticky="w", padx=12, pady=(8, 4))
 
     # ── Tab 2: Samenvatting & Conditiescores ─────────────────────────────────
     def _tab_samenvatting(self):
@@ -1063,7 +1236,7 @@ class DakInspectieApp:
                     self.ai_overlay_path = result["overlay_path"]
                     self.ai_classificatie.set(result["classificatie"])
                     self.ai_uitleg.set(result["uitleg"])
-                    self.ai_use_overlay_var.set(True)
+                    self.ai_use_overlay_var.set(False)
 
                     status_color = {
                         "GOED": "#2f855a",
@@ -1551,8 +1724,8 @@ class DakInspectieApp:
         self.ai_daktype_var.set("Auto (uit projectgegevens)")
         self.ai_profiel_var.set("Gebalanceerd")
         self.ai_sensitivity_var.set(50)
-        self.ai_auto_place_var.set(True)
-        self.ai_use_overlay_var.set(True)
+        self.ai_auto_place_var.set(False)
+        self.ai_use_overlay_var.set(False)
         self.ai_preview_label.configure(image="", text="[ Analyse-voorbeeld verschijnt hier ]")
 
         self.status_algemeen.set("MATIG / AANDACHTSPUNT")
@@ -1646,462 +1819,39 @@ class DakInspectieApp:
 
     # ── ReportLab document ────────────────────────────────────────────────────
     def _build_pdf(self, filepath: str):
-        is_oplever = self.rapport_type.get() == "Opleverrapport"
-        report_title = "DAK OPLEVERRAPPORT" if is_oplever else "DRONE INSPECTIERAPPORT"
-        datum_label = "Datum Oplevering" if is_oplever else "Datum Inspectie"
-        operator_label = "Uitvoerder" if is_oplever else "Operator"
-        PAGE_W, PAGE_H = A4
-        MARGIN = 2 * cm
-        W = PAGE_W - 2 * MARGIN   # usable width
-
-        doc = SimpleDocTemplate(
-            filepath, pagesize=A4,
-            leftMargin=MARGIN, rightMargin=MARGIN,
-            topMargin=MARGIN, bottomMargin=MARGIN)
-
-        base = getSampleStyleSheet()
-
-        # ---- Styles ----
-        def S(name, **kw):
-            return ParagraphStyle(name, **kw)
-
-        h2 = S("H2", fontSize=11.5, fontName="Helvetica-Bold",
-                textColor=colors.HexColor("#1f2d3d"),
-                spaceBefore=8, spaceAfter=2)
-        h3 = S("H3", fontSize=10, fontName="Helvetica-Bold",
-                textColor=colors.HexColor("#32465a"),
-                spaceBefore=6, spaceAfter=2)
-        normal = S("Norm", fontSize=9, fontName="Helvetica",
-                   textColor=colors.HexColor("#2c2c2c"), leading=13)
-        justify = S("Just", fontSize=9, fontName="Helvetica",
-                    alignment=TA_JUSTIFY, leading=14,
-                    textColor=colors.HexColor("#2c2c2c"))
-        center = S("Ctr", fontSize=8, fontName="Helvetica",
-                   alignment=TA_CENTER, textColor=colors.grey)
-        cell_bold = S("CB", fontSize=9, fontName="Helvetica-Bold",
-                      textColor=colors.HexColor("#2c2c2c"))
-        white_bold = S("WB", fontSize=9, fontName="Helvetica-Bold",
-                       textColor=colors.white)
-
-        DARK = colors.HexColor("#1f2d3d")
-        MID = colors.HexColor("#32465a")
-        LIGHT = colors.HexColor("#f1f4f7")
-        GRID = colors.HexColor("#c6d0da")
-        ROW_ALT = colors.HexColor("#f8fafc")
-
-        story = []
-
-        # ════════════════════════════════════════════════════════════════
-        # HEADER
-        # ════════════════════════════════════════════════════════════════
-        logo_path = os.path.join(os.path.dirname(__file__), "inspectie.png")
-        if os.path.exists(logo_path):
-            logo_block = Image(logo_path, width=9.0 * cm, height=2.2 * cm,
-                               kind="proportional")
-        else:
-            logo_block = Paragraph('<font size="17"><b>DAKWERK STERKEN</b></font>',
-                                   S("h", fontName="Helvetica-Bold",
-                                     textColor=colors.white))
-
-        hdr = [
-            [logo_block,
-             Paragraph(f'<b>Rapportnummer:</b>  {self.rapportnummer.get()}',
-                       S("hr", fontSize=9, fontName="Helvetica",
-                         textColor=colors.HexColor("#2c2c2c")))],
-            [Paragraph(f'<font size="8" color="#b7c3cf">{report_title}</font>',
-                       S("hs", fontName="Helvetica", textColor=colors.white)),
-             Paragraph(f'<b>{datum_label}:</b>  {self.datum.get()}',
-                       S("hr2", fontSize=9, fontName="Helvetica",
-                         textColor=colors.HexColor("#2c2c2c")))],
-            ["",
-             Paragraph(f'<b>{operator_label}:</b>  {self.operator.get()}',
-                       S("hr3", fontSize=9, fontName="Helvetica",
-                         textColor=colors.HexColor("#2c2c2c")))],
-        ]
-        hdr_t = Table(hdr, colWidths=[10 * cm, W - 10 * cm])
-        hdr_t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), DARK),
-            ("BACKGROUND", (1, 0), (1, -1), LIGHT),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-            ("PADDING",    (0, 0), (-1, -1), 9),
-            ("LINEBELOW",  (0, 0), (-1, -1), 0.4, GRID),
-        ]))
-        story.append(hdr_t)
-        story.append(Spacer(1, 0.4 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 1 – Klantgegevens
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("1.  Project- &amp; Klantgegevens", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.15 * cm))
-
-        def kv(key, val):
-            return [Paragraph(f"<b>{key}</b>", normal),
-                    Paragraph(val or "—", normal)]
-
-        klant = Table([
-            kv("Opdrachtgever", self.opdrachtgever.get()) +
-            kv("Type Object", self.type_object.get()),
-            kv("Adres", self.adres.get()) +
-            kv("Dakbedekking", self.dakbedekking.get()),
-            kv("Postcode / Plaats", self.postcode.get()) +
-            kv("Bouwjaar", self.bouwjaar.get()),
-            kv("Telefoonnummer", self.telefoon.get()) +
-            kv("Oppervlakte", (self.oppervlakte.get() or "—") + " m²"),
-        ], colWidths=[3.8 * cm, 4.7 * cm, 3.8 * cm, 4.7 * cm])
-        klant.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#dbe3ec")),
-            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#dbe3ec")),
-            ("ROWBACKGROUNDS", (1, 0), (1, -1),
-             [colors.white, ROW_ALT, colors.white, ROW_ALT]),
-            ("ROWBACKGROUNDS", (3, 0), (3, -1),
-             [colors.white, ROW_ALT, colors.white, ROW_ALT]),
-            ("GRID",    (0, 0), (-1, -1), 0.5, GRID),
-            ("PADDING", (0, 0), (-1, -1), 6),
-            ("VALIGN",  (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        story.append(klant)
-        story.append(Spacer(1, 0.25 * cm))
-
-        # ── Locatiekaart in PDF ──────────────────────────────────────────
-        if self.kaart_path and os.path.exists(self.kaart_path):
-            try:
-                MAP_W, MAP_H = W, 7.5 * cm
-                kaart_img = Image(self.kaart_path, width=MAP_W,
-                                  height=MAP_H, kind="proportional")
-                kaart_tbl = Table([[kaart_img]], colWidths=[MAP_W])
-                kaart_tbl.setStyle(TableStyle([
-                    ("BOX",        (0, 0), (-1, -1), 0.8, MID),
-                    ("PADDING",    (0, 0), (-1, -1), 0),
-                    ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
-                ]))
-                story.append(kaart_tbl)
-                story.append(Paragraph(
-                    "<i>Kaartbron: OpenStreetMap contributors (© OpenStreetMap)</i>",
-                    S("kaartcap", fontSize=6.5, fontName="Helvetica",
-                      textColor=colors.grey)))
-            except Exception:
-                pass
-        story.append(Spacer(1, 0.3 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 2 – Doel
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("2.  Doel van de Oplevering" if is_oplever else "2.  Doel van de Inspectie", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.1 * cm))
-        if is_oplever:
-            story.append(Paragraph(
-                "Het doel van dit opleverrapport is het vastleggen van de opgeleverde "
-                "staat van het dak, inclusief resterende aandachtspunten en afgesproken "
-                "acties. Het document vormt een controle- en overdrachtsmoment tussen "
-                "uitvoering en opdrachtgever.", justify))
-        else:
-            story.append(Paragraph(
-                "Het doel van deze drone-inspectie is het contactloos, veilig en "
-                "nauwkeurig in kaart brengen van de algehele conditie van de "
-                "dakbedekking, randafwerkingen, hemelwaterafvoeren en eventuele "
-                "aanvullende dakcomponenten. Dit rapport dient als objectieve "
-                "nulmeting ter vaststelling van preventief onderhoud of actuele "
-                "schadecomplexen.", justify))
-        story.append(Spacer(1, 0.3 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 3 – Samenvatting & Conditiescore
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("3.  Opleverstatus &amp; Beoordeling" if is_oplever else "3.  Samenvatting &amp; Conditiescore", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.1 * cm))
-
-        STATUS_COLORS = {
-            "UITSTEKEND": "#2f855a",
-            "GOED": "#4299e1",
-            "MATIG / AANDACHTSPUNT": "#d69e2e",
-            "SLECHT": "#dd6b20",
-            "KRITIEK": "#c53030",
+        payload = {
+            "rapport_type": self.rapport_type.get(),
+            "company_name": self._company_name(),
+            "logo_path": self._company_logo(),
+            "rapportnummer": self.rapportnummer.get(),
+            "datum": self.datum.get(),
+            "operator": self.operator.get(),
+            "opdrachtgever": self.opdrachtgever.get(),
+            "adres": self.adres.get(),
+            "postcode": self.postcode.get(),
+            "telefoon": self.telefoon.get(),
+            "type_object": self.type_object.get(),
+            "dakbedekking": self.dakbedekking.get(),
+            "bouwjaar": self.bouwjaar.get(),
+            "oppervlakte": self.oppervlakte.get(),
+            "status_algemeen": self.status_algemeen.get(),
+            "samenvatting": self._text_get(self.samenvatting_tekst),
+            "scores": [(label, cb.get()) for label, cb in self.scores],
+            "resultaten": [
+                {
+                    "title": self.resultaat_kopjes[i] if i < len(self.resultaat_kopjes) else f"2.{i + 1}",
+                    "omschrijving": self._text_get(t),
+                    "status": s.get(),
+                    "foto": p.get(),
+                }
+                for i, (t, s, p) in enumerate(self.resultaten)
+            ],
+            "foto_items": self._collect_photo_items(),
+            "advies_kort": self._text_get(self.advies_kort),
+            "advies_middel": self._text_get(self.advies_middel),
+            "advies_periodiek": self._text_get(self.advies_periodiek),
         }
-        sv = self.status_algemeen.get()
-        sc = colors.HexColor(STATUS_COLORS.get(sv, "#95a5a6"))
-
-        status_row = Table(
-            [[Paragraph("<b>Algehele status van het dak:</b>", normal),
-              Paragraph(f'<font color="white"><b>  {sv}  </b></font>',
-                        S("svs", fontSize=10, fontName="Helvetica-Bold",
-                          textColor=colors.white, backColor=sc,
-                          alignment=TA_CENTER))]],
-            colWidths=[9 * cm, W - 9 * cm])
-        status_row.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), LIGHT),
-            ("BACKGROUND", (1, 0), (1, 0), sc),
-            ("PADDING",    (0, 0), (-1, -1), 8),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        story.append(status_row)
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph(
-            self.samenvatting_tekst.get("1.0", "end").strip(), justify))
-        story.append(Spacer(1, 0.25 * cm))
-
-        # Score table
-        SCORE_CLR = {
-            "1": "#2f855a", "2": "#4299e1",
-            "3": "#d69e2e", "4": "#dd6b20", "5": "#c53030"}
-        score_rows = [
-            [Paragraph("<b>Onderdeel</b>", white_bold),
-             Paragraph("<b>Score</b><br/>"
-                       '<font size="7">(1=Uitstekend, 5=Kritiek)</font>',
-                       S("sh", fontSize=9, fontName="Helvetica-Bold",
-                         textColor=colors.white, alignment=TA_CENTER))]
-        ]
-        for i, (lbl, cb) in enumerate(self.scores):
-            val = cb.get()
-            clr = colors.HexColor(SCORE_CLR.get(val, "#95a5a6"))
-            score_rows.append([
-                Paragraph(lbl, normal),
-                Paragraph(
-                    f'<font color="white"><b>  {val}  </b></font>',
-                    S(f"sc{i}", fontSize=11, fontName="Helvetica-Bold",
-                      textColor=colors.white, backColor=clr,
-                      alignment=TA_CENTER))
-            ])
-        score_tbl = Table(score_rows, colWidths=[W - 3.5 * cm, 3.5 * cm])
-        score_tbl.setStyle(TableStyle([
-            ("BACKGROUND",   (0, 0), (-1, 0), MID),
-            ("TEXTCOLOR",    (0, 0), (-1, 0), colors.white),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, ROW_ALT]),
-            ("GRID",  (0, 0), (-1, -1), 0.5, GRID),
-            ("PADDING", (0, 0), (-1, -1), 6),
-            ("ALIGN",   (1, 0), (1, -1), "CENTER"),
-            ("VALIGN",  (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        story.append(score_tbl)
-        story.append(Spacer(1, 0.4 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 4 – Gedetailleerde Inspectieresultaten
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("4.  Gedetailleerde Opleverpunten" if is_oplever else "4.  Gedetailleerde Inspectieresultaten", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-
-        RES_TITLES = [
-            "4.1  Dakbedekking &amp; Oppervlakte",
-            "4.2  Naden en Lasverbindingen",
-            "4.3  Randafwerking &amp; Trimmen",
-            "4.4  Hemelwaterafvoer (HWA) &amp; Goot",
-            "4.5  Dakdoorvoeren &amp; Aansluitingen",
-        ]
-        STATUS_BG = {
-            "Akkoord": "#2f855a",
-            "Akkoord (lichte vervuiling)": "#4299e1",
-            "Aandachtspunt": "#d69e2e",
-            "Directe actie vereist": "#c53030",
-            "Kritiek": "#9b2c2c",
-        }
-
-        for i, (tekst_w, status_cb, foto_path_var) in enumerate(self.resultaten):
-            story.append(Spacer(1, 0.25 * cm))
-            story.append(Paragraph(RES_TITLES[i], h3))
-
-            tekst = tekst_w.get("1.0", "end").strip()
-            story.append(Paragraph(tekst, justify))
-            story.append(Spacer(1, 0.1 * cm))
-
-            sv2 = status_cb.get()
-            sbg = colors.HexColor(STATUS_BG.get(sv2, "#95a5a6"))
-
-            sr = Table(
-                [[Paragraph("<b>Status:</b>", normal),
-                  Paragraph(f'<font color="white"><b>  {sv2}  </b></font>',
-                            S(f"sr{i}", fontSize=9, fontName="Helvetica-Bold",
-                              textColor=colors.white, backColor=sbg))]],
-                colWidths=[2.2 * cm, W - 2.2 * cm])
-            sr.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (0, 0), LIGHT),
-                ("BACKGROUND", (1, 0), (1, 0), sbg),
-                ("PADDING",    (0, 0), (-1, -1), 6),
-                ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-                ("GRID",       (0, 0), (-1, -1), 0.5, GRID),
-            ]))
-            story.append(sr)
-
-            # ── Sectie-foto (indien geüpload) ──
-            foto_path = foto_path_var.get()
-            if foto_path and os.path.exists(foto_path):
-                try:
-                    SEC_IMG_W, SEC_IMG_H = 10 * cm, 7 * cm
-                    sec_img = Image(foto_path, width=SEC_IMG_W,
-                                   height=SEC_IMG_H, kind="proportional")
-                    img_tbl = Table(
-                        [[sec_img]],
-                        colWidths=[SEC_IMG_W])
-                    img_tbl.setStyle(TableStyle([
-                        ("ALIGN",      (0, 0), (-1, -1), "LEFT"),
-                        ("PADDING",    (0, 0), (-1, -1), 4),
-                        ("BOX",        (0, 0), (-1, -1), 0.5, GRID),
-                        ("BACKGROUND", (0, 0), (-1, -1), ROW_ALT),
-                    ]))
-                    story.append(Spacer(1, 0.15 * cm))
-                    story.append(img_tbl)
-                    story.append(Paragraph(
-                        f"<i>{os.path.basename(foto_path)}</i>",
-                        S(f"ic{i}", fontSize=7, fontName="Helvetica",
-                          textColor=colors.grey)))
-                except Exception:
-                    pass
-
-        story.append(Spacer(1, 0.45 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 5 – Fotobijlage
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph(
-            "5.  Visuele Fotobijlage (Drone-opnames)", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.2 * cm))
-
-        foto_items = self._collect_photo_items()
-        for i, item in enumerate(foto_items, start=1):
-            path = item.get("path", "")
-            caption = item.get("caption", "")
-
-            story.append(Paragraph(f"<b>Foto {i}</b>", normal))
-            if path and os.path.exists(path):
-                try:
-                    story.append(Image(path, width=11.5 * cm, height=7.0 * cm, kind="proportional"))
-                except Exception:
-                    story.append(Paragraph("[ Foto kon niet worden geladen ]", center))
-            else:
-                story.append(Paragraph("[ Geen foto gekoppeld ]", center))
-            story.append(Paragraph(f"<i>Foto: {caption or '—'}</i>", center))
-            story.append(Spacer(1, 0.15 * cm))
-
-        story.append(Spacer(1, 0.45 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 6 – AI Schadecheck (indicatief)
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("6.  AI Schadecheck (indicatief)", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.1 * cm))
-
-        story.append(Paragraph(
-            (
-                "Deze automatische beeldanalyse is indicatief en vervangt geen technische beoordeling op locatie. "
-                "Gebruik de uitkomst als extra signaal in combinatie met de overige inspectieresultaten."
-            ),
-            justify,
-        ))
-        story.append(Spacer(1, 0.15 * cm))
-
-        ai_status = self.ai_classificatie.get() or "Nog niet geanalyseerd"
-        ai_uitleg = self.ai_uitleg.get() or ""
-        ai_color = {
-            "GOED": colors.HexColor("#2f855a"),
-            "AANDACHTSPUNTEN": colors.HexColor("#d69e2e"),
-            "SCHADE": colors.HexColor("#c53030"),
-        }.get(ai_status, colors.HexColor("#718096"))
-
-        ai_status_tbl = Table(
-            [[Paragraph("<b>Automatische beoordeling:</b>", normal),
-              Paragraph(
-                  f'<font color="white"><b>  {ai_status}  </b></font>',
-                  S("ai_state", fontSize=10, fontName="Helvetica-Bold", textColor=colors.white, backColor=ai_color, alignment=TA_CENTER),
-              )]],
-            colWidths=[8.2 * cm, W - 8.2 * cm],
-        )
-        ai_status_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), LIGHT),
-            ("BACKGROUND", (1, 0), (1, 0), ai_color),
-            ("PADDING", (0, 0), (-1, -1), 7),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("GRID", (0, 0), (-1, -1), 0.5, GRID),
-        ]))
-        story.append(ai_status_tbl)
-        story.append(Spacer(1, 0.12 * cm))
-        story.append(Paragraph(ai_uitleg, justify))
-        story.append(Spacer(1, 0.2 * cm))
-
-        if self.ai_overlay_path and os.path.exists(self.ai_overlay_path):
-            try:
-                AI_W, AI_H = W, 8.0 * cm
-                ai_img = Image(self.ai_overlay_path, width=AI_W, height=AI_H, kind="proportional")
-                ai_tbl = Table([[ai_img]], colWidths=[AI_W])
-                ai_tbl.setStyle(TableStyle([
-                    ("BOX", (0, 0), (-1, -1), 0.6, GRID),
-                    ("PADDING", (0, 0), (-1, -1), 3),
-                    ("BACKGROUND", (0, 0), (-1, -1), ROW_ALT),
-                ]))
-                story.append(ai_tbl)
-            except Exception:
-                pass
-        story.append(Spacer(1, 0.3 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # SECTION 7 – Conclusie & Advies
-        # ════════════════════════════════════════════════════════════════
-        story.append(Paragraph("7.  Conclusie &amp; Advies", h2))
-        story.append(HRFlowable(width=W, thickness=1.2, color=MID))
-        story.append(Spacer(1, 0.1 * cm))
-        story.append(Paragraph(
-            "Op basis van de verzamelde dronebeelden adviseren wij de "
-            "volgende acties op te nemen in uw onderhoudsplanning:", justify))
-        story.append(Spacer(1, 0.15 * cm))
-
-        advies_items = [
-            ("Korte termijn  (Binnen 3 maanden)",
-             self.advies_kort, "#fdecea", "#e74c3c"),
-            ("Middellange termijn  (Binnen 1 à 2 jaar)",
-             self.advies_middel, "#fef9ec", "#f39c12"),
-            ("Periodiek onderhoud",
-             self.advies_periodiek, "#eafaf1", "#27ae60"),
-        ]
-        for lbl, widget, bg_hex, accent_hex in advies_items:
-            tekst = widget.get("1.0", "end").strip()
-            adv = Table(
-                [[Paragraph(f"<b>{lbl}:</b>", cell_bold),
-                  Paragraph(tekst, justify)]],
-                colWidths=[4.8 * cm, W - 4.8 * cm])
-            adv.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (0, 0),
-                 colors.HexColor(bg_hex)),
-                ("BACKGROUND", (1, 0), (1, 0), colors.white),
-                ("LEFTPADDING",  (0, 0), (0, 0), 10),
-                ("LINERIGHT",    (0, 0), (0, 0), 3,
-                 colors.HexColor(accent_hex)),
-                ("GRID",    (0, 0), (-1, -1), 0.5, GRID),
-                ("PADDING", (0, 0), (-1, -1), 7),
-                ("VALIGN",  (0, 0), (-1, -1), "TOP"),
-            ]))
-            story.append(adv)
-            story.append(Spacer(1, 0.12 * cm))
-
-        story.append(Spacer(1, 0.5 * cm))
-
-        # ════════════════════════════════════════════════════════════════
-        # FOOTER
-        # ════════════════════════════════════════════════════════════════
-        footer = Table(
-            [[Paragraph(
-                "<b>Rapport opgesteld door:</b><br/>"
-                "Dakwerk Sterken<br/>"
-                "Technische Inspecties &amp; Onderhoud",
-                S("ft", fontSize=9, fontName="Helvetica",
-                  textColor=colors.white, leading=14)),
-              Paragraph(
-                "<b>Gecertificeerd Drone Operator</b><br/>"
-                "A1 / A3  –  A2",
-                S("ft2", fontSize=9, fontName="Helvetica",
-                  textColor=colors.white, alignment=TA_RIGHT, leading=14))]],
-            colWidths=[10 * cm, W - 10 * cm])
-        footer.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), DARK),
-            ("PADDING",    (0, 0), (-1, -1), 12),
-            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ]))
-        story.append(footer)
-
-        doc.build(story)
+        build_pdf_report(filepath, payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
