@@ -9,7 +9,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
-                                TableStyle, Image, HRFlowable, KeepTogether)
+                                TableStyle, Image, HRFlowable)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 
@@ -198,30 +198,14 @@ class AnnotatieVenster(tk.Toplevel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helper: scrollable frame inside a notebook tab
+# Helper: plain frame inside a notebook tab (zonder scrollbars)
 # ─────────────────────────────────────────────────────────────────────────────
-def scrollable_tab(notebook, title):
-    outer = ttk.Frame(notebook)
-    notebook.add(outer, text=title)
-
-    canvas = tk.Canvas(outer, bg="#f0f4f8", highlightthickness=0)
-    scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-    inner = ttk.Frame(canvas)
-
-    inner.bind("<Configure>",
-               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.create_window((0, 0), window=inner, anchor="nw")
-    canvas.configure(yscrollcommand=scrollbar.set)
-
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
-
-    # Mouse-wheel scrolling
-    def _on_mousewheel(event):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    canvas.bind_all("<MouseWheel>", _on_mousewheel)
-    return inner
+def tab_frame(notebook, title):
+    frame = ttk.Frame(notebook, padding=(12, 10))
+    notebook.add(frame, text=title)
+    frame.columnconfigure(1, weight=1)
+    frame.columnconfigure(3, weight=1)
+    return frame
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +215,8 @@ class DakInspectieApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Dakwerk Sterken – Drone Inspectierapport Generator")
-        self.root.geometry("960x720")
+        self.root.geometry("1280x860")
+        self.root.minsize(1100, 760)
         self.root.resizable(True, True)
 
         # Photo path variables
@@ -244,6 +229,8 @@ class DakInspectieApp:
 
     # ── UI skeleton ──────────────────────────────────────────────────────────
     def _build_ui(self):
+        self._apply_theme()
+
         # Top banner
         banner = tk.Frame(self.root, bg="#1a252f", pady=12)
         banner.pack(fill="x")
@@ -252,34 +239,40 @@ class DakInspectieApp:
         tk.Label(banner, text="Drone Inspectierapport Generator",
                  font=("Arial", 11), fg="#bdc3c7", bg="#1a252f").pack()
 
-        # Notebook
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TNotebook.Tab", padding=[12, 6], font=("Arial", 10))
-
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=8, pady=8)
 
         self._tab_algemeen()
-        self._tab_samenvatting()
         self._tab_resultaten()
         self._tab_fotos()
+        self._tab_samenvatting()
         self._tab_conclusie()
 
         # Bottom action bar
         bar = tk.Frame(self.root, bg="#2c3e50", pady=6)
         bar.pack(fill="x", padx=8, pady=(0, 8))
-        tk.Button(bar, text="📄  Genereer PDF Rapport",
-                  font=("Arial", 12, "bold"), bg="#27ae60", fg="white",
-                  activebackground="#1e8449", padx=20, pady=8,
-                  relief="flat", cursor="hand2",
-                  command=self.genereer_pdf).pack(side="right", padx=8)
+        ttk.Button(
+            bar,
+            text="Genereer PDF Rapport",
+            style="Primary.TButton",
+            command=self.genereer_pdf,
+        ).pack(side="right", padx=8)
+
+    def _apply_theme(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TNotebook", background="#f4f6f8")
+        style.configure("TNotebook.Tab", padding=[16, 8], font=("Arial", 10, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
+        style.configure("TFrame", background="#f4f6f8")
+        style.configure("TLabel", background="#f4f6f8")
+        style.configure("Primary.TButton", font=("Arial", 11, "bold"), padding=(16, 8))
 
     # ── Shared widget helpers ─────────────────────────────────────────────────
     def _row_entry(self, parent, label, row, default="", col=0, width=36):
         """Label + Entry at given grid row, starting at given column pair."""
         tk.Label(parent, text=label, font=("Arial", 10),
-                 anchor="w", bg="#f0f4f8").grid(
+                 anchor="w", bg="#f4f6f8").grid(
             row=row, column=col, sticky="w", padx=(12, 4), pady=4)
         var = tk.StringVar(value=default)
         ttk.Entry(parent, textvariable=var, width=width).grid(
@@ -288,7 +281,7 @@ class DakInspectieApp:
 
     def _row_text(self, parent, label, row, height=4, width=72, default=""):
         tk.Label(parent, text=label, font=("Arial", 10),
-                 anchor="nw", bg="#f0f4f8").grid(
+                 anchor="nw", bg="#f4f6f8").grid(
             row=row, column=0, sticky="nw", padx=(12, 4), pady=4)
         txt = tk.Text(parent, height=height, width=width,
                       font=("Arial", 10), wrap="word",
@@ -300,9 +293,9 @@ class DakInspectieApp:
 
     def _section_label(self, parent, text, row):
         tk.Label(parent, text=text, font=("Arial", 12, "bold"),
-                 fg="#1a252f", bg="#f0f4f8").grid(
+                 fg="#1a252f", bg="#f4f6f8").grid(
             row=row, column=0, columnspan=4, sticky="w",
-            padx=12, pady=(14, 2))
+            padx=8, pady=(10, 2))
 
     def _separator(self, parent, row):
         ttk.Separator(parent, orient="horizontal").grid(
@@ -310,7 +303,7 @@ class DakInspectieApp:
 
     # ── Tab 1: Algemeen & Klantgegevens ──────────────────────────────────────
     def _tab_algemeen(self):
-        tab = scrollable_tab(self.nb, "📋  Algemeen & Klant")
+        tab = tab_frame(self.nb, "Algemeen & Klant")
 
         self._section_label(tab, "Rapportgegevens", 0)
         self._separator(tab, 1)
@@ -333,11 +326,11 @@ class DakInspectieApp:
         self.oppervlakte = self._row_entry(tab, "Oppervlakte (m²):", 14)
 
         # ── Kaart sectie ─────────────────────────────────────────────────────
-        self._section_label(tab, "📍  Locatie opzoeken", 15)
+        self._section_label(tab, "Locatie opzoeken", 15)
         self._separator(tab, 16)
 
         tk.Label(tab, text="Zoeken op adres:", font=("Arial", 10),
-                 anchor="w", bg="#f0f4f8").grid(
+                 anchor="w", bg="#f4f6f8").grid(
             row=17, column=0, sticky="w", padx=(12, 4), pady=4)
 
         zoek_frame = ttk.Frame(tab)
@@ -352,7 +345,7 @@ class DakInspectieApp:
 
         self._kaart_status_var = tk.StringVar(value="")
         tk.Label(tab, textvariable=self._kaart_status_var,
-                 font=("Arial", 9, "italic"), fg="#555", bg="#f0f4f8").grid(
+                 font=("Arial", 9, "italic"), fg="#555", bg="#f4f6f8").grid(
             row=18, column=0, columnspan=4, sticky="w", padx=14, pady=1)
 
         # Kaartweergave
@@ -360,13 +353,13 @@ class DakInspectieApp:
             tab, bg="#dde4ea",
             text="[ Kaart verschijnt hier na het zoeken ]",
             font=("Arial", 9), fg="#888",
-            width=62, height=14, relief="solid", bd=1)
+            width=62, height=8, relief="solid", bd=1)
         self._kaart_label.grid(row=19, column=0, columnspan=4,
                                padx=12, pady=(4, 12), sticky="w")
 
     # ── Tab 2: Samenvatting & Conditiescores ─────────────────────────────────
     def _tab_samenvatting(self):
-        tab = scrollable_tab(self.nb, "📊  Samenvatting")
+        tab = tab_frame(self.nb, "Samenvatting")
 
         self._section_label(tab, "Samenvatting & Conditiescore", 0)
         self._separator(tab, 1)
@@ -415,7 +408,7 @@ class DakInspectieApp:
 
     # ── Tab 3: Gedetailleerde Inspectieresultaten ─────────────────────────────
     def _tab_resultaten(self):
-        tab = scrollable_tab(self.nb, "🔍  Inspectieresultaten")
+        tab = tab_frame(self.nb, "Inspectieresultaten")
 
         sections = [
             ("4.1  Dakbedekking & Oppervlakte",
@@ -444,50 +437,70 @@ class DakInspectieApp:
              "Akkoord"),
         ]
 
+        tk.Label(
+            tab,
+            text="Vul elk onderdeel in via de subtabs. Dit houdt alle velden bruikbaar zonder scrollbalk.",
+            font=("Arial", 9, "italic"),
+            bg="#f4f6f8",
+            fg="#5f6b7a",
+        ).pack(anchor="w", padx=4, pady=(2, 8))
+
+        sub_nb = ttk.Notebook(tab)
+        sub_nb.pack(fill="both", expand=True)
+
         self.resultaten = []
-        row = 0
         for title, default_tekst, default_status in sections:
-            self._section_label(tab, title, row);      row += 1
-            self._separator(tab, row);                 row += 1
+            frame = ttk.Frame(sub_nb, padding=12)
+            sub_nb.add(frame, text=title.split("  ")[0])
+            frame.columnconfigure(1, weight=1)
 
-            tekst = self._row_text(tab, "Omschrijving:", row,
-                                   height=4, default=default_tekst)
-            row += 1
+            tk.Label(frame, text=title, font=("Arial", 11, "bold"), bg="#f4f6f8").grid(
+                row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+            )
 
-            tk.Label(tab, text="Status:", font=("Arial", 10),
-                     bg="#f0f4f8").grid(row=row, column=0, sticky="w",
-                                        padx=(12, 4), pady=4)
+            tk.Label(frame, text="Omschrijving:", font=("Arial", 10), bg="#f4f6f8").grid(
+                row=1, column=0, sticky="nw", pady=4
+            )
+            tekst = tk.Text(frame, height=9, wrap="word", font=("Arial", 10), relief="solid", bd=1)
+            tekst.insert("1.0", default_tekst)
+            tekst.grid(row=1, column=1, sticky="nsew", pady=4)
+
+            tk.Label(frame, text="Status:", font=("Arial", 10), bg="#f4f6f8").grid(
+                row=2, column=0, sticky="w", pady=4
+            )
             status = ttk.Combobox(
-                tab, width=32, state="readonly",
-                values=["Akkoord", "Akkoord (lichte vervuiling)",
-                        "Aandachtspunt", "Directe actie vereist", "Kritiek"])
+                frame,
+                width=34,
+                state="readonly",
+                values=["Akkoord", "Akkoord (lichte vervuiling)", "Aandachtspunt", "Directe actie vereist", "Kritiek"],
+            )
             status.set(default_status)
-            status.grid(row=row, column=1, sticky="w", padx=(0, 12), pady=4)
-            row += 1
+            status.grid(row=2, column=1, sticky="w", pady=4)
 
-            # ── Foto upload voor dit onderdeel ──
             foto_path_var = tk.StringVar()
-            tk.Label(tab, text="Foto uploaden:", font=("Arial", 10),
-                     bg="#f0f4f8").grid(row=row, column=0, sticky="w",
-                                        padx=(12, 4), pady=4)
-            foto_frame = ttk.Frame(tab)
-            foto_frame.grid(row=row, column=1, columnspan=3, sticky="ew",
-                            padx=(0, 12), pady=4)
-            ttk.Entry(foto_frame, textvariable=foto_path_var,
-                      width=38).pack(side="left", fill="x", expand=True)
-            ttk.Button(foto_frame, text="📁 Bladeren…",
-                       command=lambda v=foto_path_var: self._browse_foto(v)
-                       ).pack(side="left", padx=(4, 0))
-            ttk.Button(foto_frame, text="✏ Annoteren",
-                       command=lambda v=foto_path_var: self._open_annotatie(v)
-                       ).pack(side="left", padx=(4, 0))
-            row += 1
+            tk.Label(frame, text="Foto:", font=("Arial", 10), bg="#f4f6f8").grid(
+                row=3, column=0, sticky="w", pady=4
+            )
+            foto_frame = ttk.Frame(frame)
+            foto_frame.grid(row=3, column=1, sticky="ew", pady=4)
+            foto_frame.columnconfigure(0, weight=1)
+            ttk.Entry(foto_frame, textvariable=foto_path_var).grid(row=0, column=0, sticky="ew")
+            ttk.Button(
+                foto_frame,
+                text="Bladeren...",
+                command=lambda v=foto_path_var: self._browse_foto(v),
+            ).grid(row=0, column=1, padx=(6, 0))
+            ttk.Button(
+                foto_frame,
+                text="Annoteren",
+                command=lambda v=foto_path_var: self._open_annotatie(v),
+            ).grid(row=0, column=2, padx=(6, 0))
 
             self.resultaten.append((tekst, status, foto_path_var))
 
     # ── Tab 4: Foto's ─────────────────────────────────────────────────────────
     def _tab_fotos(self):
-        tab = scrollable_tab(self.nb, "🖼  Foto's")
+        tab = tab_frame(self.nb, "Foto's")
 
         self._section_label(tab, "Visuele Fotobijlage (Drone-opnames)", 0)
         self._separator(tab, 1)
@@ -557,7 +570,7 @@ class DakInspectieApp:
                         or raw.get("village") or raw.get("municipality", ""))
 
                 # Statische kaart genereren
-                smap = StaticMap(500, 320)
+                smap = StaticMap(500, 250)
                 smap.add_marker(CircleMarker((lon, lat), "#e74c3c", 18))
                 img = smap.render(zoom=16)
 
@@ -570,11 +583,11 @@ class DakInspectieApp:
                 # Update UI op de main thread
                 def update():
                     from PIL import ImageTk
-                    pil = img.resize((500, 320))
+                    pil = img.resize((500, 250))
                     self._kaart_tk_img = ImageTk.PhotoImage(pil)
                     self._kaart_label.configure(
                         image=self._kaart_tk_img, text="",
-                        width=500, height=320)
+                        width=500, height=250)
                     self.kaart_path = tmp.name
 
                     # Velden vullen (alleen overschrijven als leeg of anders)
@@ -612,7 +625,7 @@ class DakInspectieApp:
 
     # ── Tab 5: Conclusie & Advies ─────────────────────────────────────────────
     def _tab_conclusie(self):
-        tab = scrollable_tab(self.nb, "✅  Conclusie & Advies")
+        tab = tab_frame(self.nb, "Conclusie & Advies")
 
         self._section_label(tab, "Conclusie & Advies", 0)
         self._separator(tab, 1)
@@ -668,12 +681,12 @@ class DakInspectieApp:
         def S(name, **kw):
             return ParagraphStyle(name, **kw)
 
-        h2 = S("H2", fontSize=12, fontName="Helvetica-Bold",
-                textColor=colors.HexColor("#1a252f"),
-                spaceBefore=10, spaceAfter=3)
-        h3 = S("H3", fontSize=10, fontName="Helvetica-Bold",
-                textColor=colors.HexColor("#2c3e50"),
+        h2 = S("H2", fontSize=11.5, fontName="Helvetica-Bold",
+                textColor=colors.HexColor("#1f2d3d"),
                 spaceBefore=8, spaceAfter=2)
+        h3 = S("H3", fontSize=10, fontName="Helvetica-Bold",
+                textColor=colors.HexColor("#32465a"),
+                spaceBefore=6, spaceAfter=2)
         normal = S("Norm", fontSize=9, fontName="Helvetica",
                    textColor=colors.HexColor("#2c2c2c"), leading=13)
         justify = S("Just", fontSize=9, fontName="Helvetica",
@@ -686,11 +699,11 @@ class DakInspectieApp:
         white_bold = S("WB", fontSize=9, fontName="Helvetica-Bold",
                        textColor=colors.white)
 
-        DARK = colors.HexColor("#1a252f")
-        MID  = colors.HexColor("#2c3e50")
-        LIGHT = colors.HexColor("#ecf0f1")
-        GRID = colors.HexColor("#bdc3c7")
-        ROW_ALT = colors.HexColor("#f5f7fa")
+        DARK = colors.HexColor("#1f2d3d")
+        MID = colors.HexColor("#32465a")
+        LIGHT = colors.HexColor("#f1f4f7")
+        GRID = colors.HexColor("#c6d0da")
+        ROW_ALT = colors.HexColor("#f8fafc")
 
         story = []
 
@@ -711,7 +724,8 @@ class DakInspectieApp:
              Paragraph(f'<b>Rapportnummer:</b>  {self.rapportnummer.get()}',
                        S("hr", fontSize=9, fontName="Helvetica",
                          textColor=colors.HexColor("#2c2c2c")))],
-            ["",
+            [Paragraph('<font size="8" color="#b7c3cf">DRONE INSPECTIERAPPORT</font>',
+                       S("hs", fontName="Helvetica", textColor=colors.white)),
              Paragraph(f'<b>Datum Inspectie:</b>  {self.datum.get()}',
                        S("hr2", fontSize=9, fontName="Helvetica",
                          textColor=colors.HexColor("#2c2c2c")))],
@@ -753,8 +767,8 @@ class DakInspectieApp:
             kv("Oppervlakte", (self.oppervlakte.get() or "—") + " m²"),
         ], colWidths=[3.8 * cm, 4.7 * cm, 3.8 * cm, 4.7 * cm])
         klant.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#d5dce6")),
-            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#d5dce6")),
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#dbe3ec")),
+            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#dbe3ec")),
             ("ROWBACKGROUNDS", (1, 0), (1, -1),
              [colors.white, ROW_ALT, colors.white, ROW_ALT]),
             ("ROWBACKGROUNDS", (3, 0), (3, -1),
@@ -810,11 +824,11 @@ class DakInspectieApp:
         story.append(Spacer(1, 0.1 * cm))
 
         STATUS_COLORS = {
-            "UITSTEKEND":             "#27ae60",
-            "GOED":                   "#2ecc71",
-            "MATIG / AANDACHTSPUNT":  "#f39c12",
-            "SLECHT":                 "#e67e22",
-            "KRITIEK":                "#e74c3c",
+            "UITSTEKEND": "#2f855a",
+            "GOED": "#4299e1",
+            "MATIG / AANDACHTSPUNT": "#d69e2e",
+            "SLECHT": "#dd6b20",
+            "KRITIEK": "#c53030",
         }
         sv = self.status_algemeen.get()
         sc = colors.HexColor(STATUS_COLORS.get(sv, "#95a5a6"))
@@ -840,8 +854,8 @@ class DakInspectieApp:
 
         # Score table
         SCORE_CLR = {
-            "1": "#27ae60", "2": "#2ecc71",
-            "3": "#f39c12", "4": "#e67e22", "5": "#e74c3c"}
+            "1": "#2f855a", "2": "#4299e1",
+            "3": "#d69e2e", "4": "#dd6b20", "5": "#c53030"}
         score_rows = [
             [Paragraph("<b>Onderdeel</b>", white_bold),
              Paragraph("<b>Score</b><br/>"
@@ -887,11 +901,11 @@ class DakInspectieApp:
             "4.5  Dakdoorvoeren &amp; Aansluitingen",
         ]
         STATUS_BG = {
-            "Akkoord":                  "#27ae60",
-            "Akkoord (lichte vervuiling)": "#2ecc71",
-            "Aandachtspunt":            "#f39c12",
-            "Directe actie vereist":    "#e74c3c",
-            "Kritiek":                  "#c0392b",
+            "Akkoord": "#2f855a",
+            "Akkoord (lichte vervuiling)": "#4299e1",
+            "Aandachtspunt": "#d69e2e",
+            "Directe actie vereist": "#c53030",
+            "Kritiek": "#9b2c2c",
         }
 
         for i, (tekst_w, status_cb, foto_path_var) in enumerate(self.resultaten):
