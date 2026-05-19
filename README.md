@@ -2,6 +2,11 @@
 
 Desktop-app (Tkinter) om drone-inspecties in te vullen en als professioneel PDF-rapport te exporteren.
 
+Deze repository bevat nu ook een **cross-platform versie** op basis van Flet:
+
+- `main.py` -> bestaande uitgebreide desktopversie (Tkinter)
+- `app_flet.py` -> cross-platform versie voor Windows + Android route
+
 ## Wat is verbeterd
 
 - Logischere tabvolgorde voor invoer:
@@ -29,6 +34,9 @@ Desktop-app (Tkinter) om drone-inspecties in te vullen en als professioneel PDF-
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+
+# Alleen nodig als je een Windows .exe wilt bouwen
+pip install -r requirements-dev.txt
 ```
 
 ## Starten
@@ -36,6 +44,106 @@ pip install -r requirements.txt
 ```powershell
 python main.py
 ```
+
+Cross-platform (Windows + Android basis) starten:
+
+```powershell
+python app_flet.py
+```
+
+## Starten in PyCharm
+
+1. Open het project in PyCharm.
+2. Zet interpreter op `venv` (`File -> Settings -> Project -> Python Interpreter`).
+3. Maak een Run Configuration:
+   - **Script path:** `app_flet.py` (voor Windows + Android route)
+   - **Working directory:** projectmap
+4. Klik op **Run**.
+
+Tip: wil je de oude desktopversie draaien, maak een tweede configuratie met `main.py`.
+
+Je kunt ook direct via terminal:
+
+```powershell
+.\run_flet.ps1
+```
+
+Cross-platform versie starten:
+
+```powershell
+python app_flet.py
+```
+
+## Installeren op Windows (aanbevolen: cross-platform versie)
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python app_flet.py
+```
+
+Voor distributie als executable kun je de bestaande PyInstaller flow gebruiken op `main.py`, of de Flet build route gebruiken voor `app_flet.py`.
+
+## Android (cross-platform versie)
+
+Gebruik `app_flet.py` als basis voor Android. Praktische route:
+
+1. Installeer Android Studio (SDK + emulator)
+2. Installeer project dependencies (`pip install -r requirements.txt`)
+3. Bouw Android package met Flet build tooling
+
+> Let op: de huidige Tkinter app (`main.py`) is niet geschikt als native Android app. Voor Android gebruik je `app_flet.py`.
+
+## Windows distributie (.exe)
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name Dakinspecties --add-data "inspectie.png;." main.py
+```
+
+- Output staat in `dist\Dakinspecties\`.
+- Start met `dist\Dakinspecties\Dakinspecties.exe`.
+
+## Android
+
+Belangrijk: de desktopvariant `main.py` gebruikt **Tkinter**. Tkinter is niet geschikt voor een native Android-app (APK) in productie.
+
+Praktische opties:
+
+1. **Snelste route (aanbevolen nu):** gebruik de app op Windows (EXE) en werk mobiel via remote desktop.
+2. **Echte Android-installatie (APK):** UI herschrijven naar een framework dat Android ondersteunt (bijv. Flet/Kivy/Flutter).
+
+Als je wilt, kan ik de volgende stap een concrete migratie doen naar een Android-geschikte UI (fasegewijs, zonder je PDF-logica te verliezen).
+
+### APK bouwen met Flet (voor `app_flet.py`)
+
+Voorwaarden:
+
+- Android Studio geinstalleerd (SDK + commandline tools)
+- Java (JDK) beschikbaar
+- `venv` actief
+
+Controleer setup:
+
+```powershell
+.\venv\Scripts\flet.exe doctor
+```
+
+Bouw APK:
+
+```powershell
+.\build_android_apk.ps1
+```
+
+Of handmatig:
+
+```powershell
+.\venv\Scripts\flet.exe build apk . --module-name app_flet --project dakinspecties --product "Dakinspecties" --org "nl.dakinspecties" --yes
+```
+
+Na succesvolle build staat het `.apk` bestand in de build-outputmap van Flet (die in de terminaloutput getoond wordt).
 
 ## Gebruik
 
