@@ -98,8 +98,7 @@ class CrossPlatformApp:
         logo_path = (self.company_logo.value or "").strip()
         if logo_path and os.path.exists(logo_path):
             return logo_path
-        fallback = os.path.join(BASE_DIR, "inspectie.png")
-        return fallback if os.path.exists(fallback) else ""
+        return ""
 
     def _save_branding(self, completed: bool = True):
         self._branding = BrandingSettings(
@@ -128,6 +127,17 @@ class CrossPlatformApp:
             self.branding_logo_preview.visible = bool(logo_path)
         if hasattr(self, "branding_name_preview"):
             self.branding_name_preview.value = company
+        if hasattr(self, "logo_path_status"):
+            raw = (self.company_logo.value or "").strip()
+            if not raw:
+                self.logo_path_status.value = "Geen logo ingesteld"
+                self.logo_path_status.color = ft.Colors.GREY_400
+            elif logo_path:
+                self.logo_path_status.value = "Logo gevonden"
+                self.logo_path_status.color = ft.Colors.GREEN_300
+            else:
+                self.logo_path_status.value = "Logo pad bestaat niet"
+                self.logo_path_status.color = ft.Colors.RED_300
 
     async def _pick_company_logo(self, e=None):
         files = await self._resolve_picker_result(
@@ -153,6 +163,10 @@ class CrossPlatformApp:
         self.notify("Bedrijfsprofiel hersteld")
 
     def _on_company_name_change(self, e):
+        self._apply_branding_ui()
+        self.page.update()
+
+    def _on_company_logo_change(self, e):
         self._apply_branding_ui()
         self.page.update()
 
@@ -267,8 +281,11 @@ class CrossPlatformApp:
         self.company_logo = ft.TextField(
             label="Logo pad",
             value=self._branding.logo_path,
-            read_only=True,
-            expand=True,
+            read_only=False,
+            expand=False,
+            width=760,
+            hint_text="Bijv. C:\\Afbeeldingen\\bedrijfslogo.png",
+            on_change=self._on_company_logo_change,
         )
 
         self.rapportnummer = ft.TextField(label="Rapportnummer", value=next_rapportnummer(), width=260)
@@ -448,10 +465,13 @@ class CrossPlatformApp:
     def tab_instellingen(self):
         self.branding_logo_preview = self._new_image(width=220, height=90, visible=False)
         self.branding_name_preview = ft.Text("Dakinspecties", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+        self.logo_path_status = ft.Text("", color=ft.Colors.GREY_400)
         return self._tab_shell([
             ft.Text("Bedrijfsprofiel", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             self.company_name,
-            ft.Row([self.company_logo, ft.Button("Kies logo", on_click=self._pick_company_logo)], wrap=True),
+            self.company_logo,
+            self.logo_path_status,
+            ft.Row([ft.Button("Kies logo", on_click=self._pick_company_logo)], wrap=True),
             ft.Row([
                 ft.Button("Opslaan", on_click=self._save_branding_action, bgcolor=ft.Colors.PRIMARY, color=ft.Colors.ON_PRIMARY),
                 ft.Button("Reset", on_click=self._reset_branding_action),

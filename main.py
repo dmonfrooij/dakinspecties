@@ -268,8 +268,7 @@ class DakInspectieApp:
         logo = (self.company_logo_path or "").strip()
         if logo and os.path.exists(logo):
             return logo
-        fallback = os.path.join(os.path.dirname(__file__), "inspectie.png")
-        return fallback if os.path.exists(fallback) else ""
+        return ""
 
     def _save_branding(self, completed=True):
         self._branding = BrandingSettings(
