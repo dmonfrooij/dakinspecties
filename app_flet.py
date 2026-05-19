@@ -2,6 +2,8 @@ import json
 import os
 import re
 import inspect
+import tempfile
+import traceback
 from datetime import date
 
 import flet as ft
@@ -74,11 +76,8 @@ class CrossPlatformApp:
                 on_surface=ft.Colors.WHITE,
             )
         )
-        self.page.window.width = 1200
-        self.page.window.height = 860
+        self._configure_window()
 
-        self._active_pick_target = None
-        self._pending_project_data = None
         self._active_tab = 0
         self._mobile_breakpoint = 760
         self._tab_labels = ["Algemeen", "Inspectieresultaten", "Foto's", "Samenvatting", "Conclusie"]
@@ -96,10 +95,41 @@ class CrossPlatformApp:
         self.page.overlay.append(snack)
         self.page.update()
 
-    async def _resolve_picker_call(self, value):
+    async def _resolve_picker_result(self, value):
         if inspect.isawaitable(value):
             return await value
         return value
+
+    def _is_phone(self) -> bool:
+        platform_str = str(getattr(self.page, "platform", "")).lower()
+        return "android" in platform_str or "ios" in platform_str
+
+    def _configure_window(self):
+        # Mobile targets do not always expose desktop window sizing APIs.
+        if self._is_phone():
+            return
+        try:
+            if getattr(self.page, "window", None):
+                self.page.window.width = 1200
+                self.page.window.height = 860
+        except Exception:
+            pass
+
+    def _fallback_dir(self) -> str:
+        fallback = os.path.join(BASE_DIR, "exports")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+    def _write_fallback_bytes(self, filename: str, payload: bytes) -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+        target = os.path.join(self._fallback_dir(), safe_name)
+        with open(target, "wb") as f:
+            f.write(payload)
+        return target
+
+    def _write_fallback_json(self, filename: str, data: dict) -> str:
+        payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        return self._write_fallback_bytes(filename, payload)
 
     def _switch_tab(self, idx: int):
         self._active_tab = idx
@@ -113,8 +143,12 @@ class CrossPlatformApp:
 
     def _is_mobile(self) -> bool:
         width = self.page.width or 0
-        if width <= 0 and getattr(self.page, "window", None):
-            width = self.page.window.width or 0
+        if width <= 0:
+            try:
+                if getattr(self.page, "window", None):
+                    width = self.page.window.width or 0
+            except Exception:
+                width = 0
         return width > 0 and width <= self._mobile_breakpoint
 
     def _apply_responsive_layout(self):
@@ -325,8 +359,11 @@ class CrossPlatformApp:
         ])
 
     def _make_pick_handler(self, target: ft.TextField):
+        """Maakt een click-handler die een foto kiest (sync/async compat)."""
         async def handler(e):
-            files = await self._resolve_picker_call(self.file_picker.pick_files(allow_multiple=False))
+            files = await self._resolve_picker_result(
+                self.file_picker.pick_files(allow_multiple=False)
+            )
             if files:
                 target.value = files[0].path
                 self.page.update()
@@ -473,11 +510,12 @@ class CrossPlatformApp:
         return self._tab_shell([self.advies_kort, self.advies_middel, self.advies_periodiek])
 
     async def pick_image_for(self, target: ft.TextField):
-        files = await self._resolve_picker_call(self.file_picker.pick_files(allow_multiple=False))
-        if not files:
-            return
-        target.value = files[0].path
-        self.page.update()
+        files = await self._resolve_picker_result(
+            self.file_picker.pick_files(allow_multiple=False)
+        )
+        if files:
+            target.value = files[0].path
+            self.page.update()
 
     def _collect(self) -> dict:
         return {
@@ -560,20 +598,44 @@ class CrossPlatformApp:
         self.page.update()
 
     async def save_project(self, e=None):
-        self._pending_project_data = self._collect()
-        path = await self._resolve_picker_call(self.save_picker.save_file(file_name=f"Project_{self.rapportnummer.value}.json"))
-        if not path:
-            return
+        data = self._collect()
+        filename = f"Project_{self.rapportnummer.value}.json"
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._pending_project_data or {}, f, ensure_ascii=False, indent=2)
+            payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+            path = await self._resolve_picker_result(
+                self.save_picker.save_file(
+                    dialog_title="Project opslaan",
+                    file_name=filename,
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["json"],
+                    src_bytes=payload,
+                )
+            )
+            if not path:
+                if self._is_phone():
+                    fallback_path = self._write_fallback_json(filename, data)
+                    mark_used_rapportnummer(self.rapportnummer.value)
+                    self.notify(f"⚠ Opslaan via dialog geannuleerd. Lokaal opgeslagen:\n{fallback_path}")
+                    return
+                self.notify("Opslaan geannuleerd")
+                return
             mark_used_rapportnummer(self.rapportnummer.value)
-            self.notify("Project opgeslagen")
+            self.notify(f"✅ Project opgeslagen:\n{path}")
         except Exception as exc:
+            if self._is_phone():
+                try:
+                    fallback_path = self._write_fallback_json(filename, data)
+                    mark_used_rapportnummer(self.rapportnummer.value)
+                    self.notify(f"⚠ Opslaan via dialog mislukt ({exc}). Lokaal opgeslagen:\n{fallback_path}")
+                    return
+                except Exception:
+                    pass
             self.notify(f"Opslaan mislukt: {exc}")
 
     async def open_project(self, e=None):
-        files = await self._resolve_picker_call(self.file_picker.pick_files(allow_multiple=False, allowed_extensions=["json"]))
+        files = await self._resolve_picker_result(
+            self.file_picker.pick_files(allow_multiple=False, allowed_extensions=["json"])
+        )
         if not files:
             return
         try:
@@ -622,21 +684,57 @@ class CrossPlatformApp:
             self.notify("PDF niet gemaakt: " + " | ".join(issues))
             return
 
-        prefix = "Opleverrapport" if self.rapport_type.value == "Opleverrapport" else "Inspectierapport"
-        path = await self._resolve_picker_call(self.save_picker.save_file(file_name=f"{prefix}_{self.rapportnummer.value}.pdf"))
-        if not path:
-            return
+        is_oplever = self.rapport_type.value == "Opleverrapport"
+        prefix = "Opleverrapport" if is_oplever else "Inspectierapport"
+        filename = f"{prefix}_{self.rapportnummer.value}.pdf"
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix="dakinspecties_", suffix=".pdf")
+        os.close(tmp_fd)
         try:
-            if self.rapport_type.value == "Opleverrapport":
-                self._build_pdf_oplever(path)
+            if is_oplever:
+                self._build_pdf_oplever(tmp_path)
             else:
-                self._build_pdf_inspectie(path)
-            if not self._verify_pdf_created(path):
+                self._build_pdf_inspectie(tmp_path)
+
+            if not self._verify_pdf_created(tmp_path):
                 self.notify("PDF controle mislukt: bestand ontbreekt of is leeg.")
                 return
-            self.notify(f"PDF opgeslagen: {path}")
+
+            with open(tmp_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            path = await self._resolve_picker_result(
+                self.save_picker.save_file(
+                    dialog_title="PDF opslaan",
+                    file_name=filename,
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["pdf"],
+                    src_bytes=pdf_bytes,
+                )
+            )
+            if not path:
+                if self._is_phone():
+                    fallback_path = self._write_fallback_bytes(filename, pdf_bytes)
+                    self.notify(f"⚠ PDF-dialog geannuleerd. Lokaal opgeslagen:\n{fallback_path}")
+                    return
+                self.notify("PDF opslaan geannuleerd")
+                return
+            self.notify(f"✅ PDF opgeslagen:\n{path}")
         except Exception as exc:
+            if self._is_phone():
+                try:
+                    if "pdf_bytes" in locals() and isinstance(pdf_bytes, (bytes, bytearray)):
+                        fallback_path = self._write_fallback_bytes(filename, bytes(pdf_bytes))
+                        self.notify(f"⚠ PDF opslaan via dialog mislukt ({exc}). Lokaal opgeslagen:\n{fallback_path}")
+                        return
+                except Exception:
+                    pass
             self.notify(f"PDF genereren mislukt: {exc}")
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
     def _build_pdf_inspectie(self, filepath: str):
         W_PAGE, _ = A4
@@ -859,7 +957,15 @@ class CrossPlatformApp:
 
 
 def main(page: ft.Page):
-    CrossPlatformApp(page)
+    try:
+        CrossPlatformApp(page)
+    except Exception as exc:
+        traceback.print_exc()
+        page.clean()
+        page.add(ft.Text("Opstartfout in app", color=ft.Colors.RED_400, size=20, weight=ft.FontWeight.BOLD))
+        page.add(ft.Text(str(exc), color=ft.Colors.RED_200))
+        page.add(ft.Text("De app kon niet starten. Deel deze foutmelding voor een fix."))
+        page.update()
 
 
 if __name__ == "__main__":
