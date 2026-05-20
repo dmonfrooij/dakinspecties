@@ -63,18 +63,33 @@ class CrossPlatformApp:
     def __init__(self, page: ft.Page):
         self.page = page
         self.page.title = "Dakinspecties"
-        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.scroll = ft.ScrollMode.HIDDEN
-        self.page.padding = 12
-        self.page.bgcolor = ft.Colors.GREY_900
+        self.page.padding = 8
+        self.page.bgcolor = ft.Colors.BLUE_GREY_50
         self.page.theme = ft.Theme(
-            color_scheme=ft.ColorScheme(
-                primary=ft.Colors.BLUE_400,
-                on_primary=ft.Colors.WHITE,
-                surface=ft.Colors.BLUE_GREY_900,
-                on_surface=ft.Colors.WHITE,
-            )
+            use_material3=True,
+            color_scheme_seed=ft.Colors.BLUE,
+            visual_density=ft.VisualDensity.COMPACT,
+            scaffold_bgcolor=ft.Colors.BLUE_GREY_50,
+            divider_color=ft.Colors.BLUE_GREY_100,
         )
+        self._panel_bg = ft.Colors.WHITE
+        self._panel_alt_bg = ft.Colors.BLUE_GREY_50
+        self._panel_border = ft.Colors.BLUE_GREY_100
+        self._accent_bg = ft.Colors.BLUE_50
+        self._accent_text = ft.Colors.BLUE_700
+        self._muted_text = ft.Colors.BLUE_GREY_600
+        self._success_text = ft.Colors.GREEN_700
+        self._error_text = ft.Colors.RED_700
+        self._page_title_size = 20
+        self._section_title_size = 16
+        self._compact_spacing = 6
+        self._compact_padding = 8
+        self._field_width = 220
+        self._dropdown_width = 190
+        self._logo_field_width = 520
+        self._status_width = 280
         self._configure_window()
 
         self._active_tab = 0
@@ -131,13 +146,13 @@ class CrossPlatformApp:
             raw = (self.company_logo.value or "").strip()
             if not raw:
                 self.logo_path_status.value = "Geen logo ingesteld"
-                self.logo_path_status.color = ft.Colors.GREY_400
+                self.logo_path_status.color = self._muted_text
             elif logo_path:
                 self.logo_path_status.value = "Logo gevonden"
-                self.logo_path_status.color = ft.Colors.GREEN_300
+                self.logo_path_status.color = self._success_text
             else:
                 self.logo_path_status.value = "Logo pad bestaat niet"
-                self.logo_path_status.color = ft.Colors.RED_300
+                self.logo_path_status.color = self._error_text
 
     async def _pick_company_logo(self, e=None):
         files = await self._resolve_picker_result(
@@ -190,8 +205,8 @@ class CrossPlatformApp:
             return
         try:
             if getattr(self.page, "window", None):
-                self.page.window.width = 1200
-                self.page.window.height = 800
+                    self.page.window.width = 1120
+                    self.page.window.height = 760
         except Exception:
             pass
 
@@ -214,8 +229,9 @@ class CrossPlatformApp:
     def _switch_tab(self, idx: int):
         self._active_tab = idx
         for i, btn in enumerate(self._tab_buttons):
-            btn.bgcolor = ft.Colors.PRIMARY if i == idx else None
-            btn.color = ft.Colors.ON_PRIMARY if i == idx else None
+            btn.bgcolor = self._accent_bg if i == idx else ft.Colors.WHITE
+            btn.color = self._accent_text if i == idx else self._muted_text
+            btn.style = self._tab_button_style(selected=i == idx)
         self._tab_content_area.content = self._tab_contents[idx]
         if self._tab_selector.value != self._tab_labels[idx]:
             self._tab_selector.value = self._tab_labels[idx]
@@ -265,17 +281,53 @@ class CrossPlatformApp:
     def _tab_shell(self, controls):
         return ft.Container(
             expand=True,
-            padding=12,
-            bgcolor=ft.Colors.BLUE_GREY_900,
-            border_radius=10,
-            content=ft.ListView(controls=controls, spacing=10, expand=True),
+            padding=self._compact_padding,
+            bgcolor=self._panel_bg,
+            border_radius=12,
+            border=ft.Border(
+                left=ft.BorderSide(1, self._panel_border),
+                right=ft.BorderSide(1, self._panel_border),
+                top=ft.BorderSide(1, self._panel_border),
+                bottom=ft.BorderSide(1, self._panel_border),
+            ),
+            content=ft.ListView(controls=controls, spacing=self._compact_spacing, expand=True),
+        )
+
+    def _tab_button_style(self, selected: bool = False):
+        return ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=18),
+            padding=ft.Padding(left=14, top=9, right=14, bottom=9),
+            side=ft.BorderSide(1, self._accent_bg if selected else self._panel_border),
+        )
+
+    def _secondary_button(self, text: str, on_click, icon=None):
+        return ft.OutlinedButton(
+            text,
+            icon=icon,
+            on_click=on_click,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=14),
+                padding=ft.Padding(left=12, top=10, right=12, bottom=10),
+                side=ft.BorderSide(1, self._panel_border),
+            ),
+        )
+
+    def _primary_button(self, text: str, on_click, icon=None):
+        return ft.FilledButton(
+            text,
+            icon=icon,
+            on_click=on_click,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=14),
+                padding=ft.Padding(left=14, top=10, right=14, bottom=10),
+            ),
         )
 
     def build_ui(self):
         self.company_name = ft.TextField(
             label="Bedrijfsnaam",
             value=self._branding.company_name,
-            width=320,
+            width=280,
             on_change=self._on_company_name_change,
         )
         self.company_logo = ft.TextField(
@@ -283,14 +335,14 @@ class CrossPlatformApp:
             value=self._branding.logo_path,
             read_only=False,
             expand=False,
-            width=760,
+            width=self._logo_field_width,
             hint_text="Bijv. C:\\Afbeeldingen\\bedrijfslogo.png",
             on_change=self._on_company_logo_change,
         )
 
-        self.rapportnummer = ft.TextField(label="Rapportnummer", value=next_rapportnummer(), width=260)
-        self.datum = ft.TextField(label="Datum inspectie", value=date.today().strftime("%d %B %Y"), width=260)
-        self.operator = ft.TextField(label="Operator", width=260)
+        self.rapportnummer = ft.TextField(label="Rapportnummer", value=next_rapportnummer(), width=200)
+        self.datum = ft.TextField(label="Datum inspectie", value=date.today().strftime("%d %B %Y"), width=200)
+        self.operator = ft.TextField(label="Operator", width=200)
         self.rapport_type = ft.Dropdown(
             label="Rapporttype",
             value="Inspectierapport",
@@ -298,7 +350,7 @@ class CrossPlatformApp:
                 ft.dropdown.Option("Inspectierapport"),
                 ft.dropdown.Option("Opleverrapport"),
             ],
-            width=210,
+            width=self._dropdown_width,
             on_select=self._on_rapport_type_change,
         )
 
@@ -321,16 +373,16 @@ class CrossPlatformApp:
                 ft.dropdown.Option("SLECHT"),
                 ft.dropdown.Option("KRITIEK"),
             ],
-            width=320,
+            width=self._status_width,
         )
-        self.samenvatting = ft.TextField(label="Samenvatting", multiline=True, min_lines=4, max_lines=8)
+        self.samenvatting = ft.TextField(label="Samenvatting", multiline=True, min_lines=3, max_lines=6)
 
         self.score_controls = [
-            ("Dakbedekking & Oppervlakte", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=120)),
-            ("Naden en Lasverbindingen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=120)),
-            ("Randafwerking & Trimmen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="3", width=120)),
-            ("Hemelwaterafvoer (HWA) & Goot", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="4", width=120)),
-            ("Dakdoorvoeren & Aansluitingen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=120)),
+            ("Dakbedekking & Oppervlakte", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=92)),
+            ("Naden en Lasverbindingen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=92)),
+            ("Randafwerking & Trimmen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="3", width=92)),
+            ("Hemelwaterafvoer (HWA) & Goot", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="4", width=92)),
+            ("Dakdoorvoeren & Aansluitingen", ft.Dropdown(options=[ft.dropdown.Option(str(i)) for i in range(1, 6)], value="2", width=92)),
         ]
 
         self.result_titles = [
@@ -342,7 +394,7 @@ class CrossPlatformApp:
         ]
         self.result_controls = []
         for title in self.result_titles:
-            oms = ft.TextField(label="Omschrijving", multiline=True, min_lines=3, max_lines=6)
+            oms = ft.TextField(label="Omschrijving", multiline=True, min_lines=2, max_lines=4)
             stat = ft.Dropdown(
                 label="Status",
                 value="Akkoord",
@@ -353,7 +405,7 @@ class CrossPlatformApp:
                     ft.dropdown.Option("Directe actie vereist"),
                     ft.dropdown.Option("Kritiek"),
                 ],
-                width=300,
+                width=230,
             )
             foto = ft.TextField(label="Foto pad", read_only=True, expand=True)
             self.result_controls.append((title, oms, stat, foto))
@@ -365,9 +417,9 @@ class CrossPlatformApp:
         self.extra_fotos = []
         self.extra_fotos_column = None
 
-        self.advies_kort = ft.TextField(label="Korte termijn", multiline=True, min_lines=2, max_lines=5)
-        self.advies_middel = ft.TextField(label="Middellange termijn", multiline=True, min_lines=2, max_lines=5)
-        self.advies_periodiek = ft.TextField(label="Periodiek onderhoud", multiline=True, min_lines=2, max_lines=5)
+        self.advies_kort = ft.TextField(label="Korte termijn", multiline=True, min_lines=2, max_lines=4)
+        self.advies_middel = ft.TextField(label="Middellange termijn", multiline=True, min_lines=2, max_lines=4)
+        self.advies_periodiek = ft.TextField(label="Periodiek onderhoud", multiline=True, min_lines=2, max_lines=4)
 
         self._tab_contents = [
             self.tab_algemeen(),
@@ -389,13 +441,25 @@ class CrossPlatformApp:
 
             btn = ft.Button(
                 content=label,
-                bgcolor=ft.Colors.PRIMARY if i == 0 else None,
-                color=ft.Colors.ON_PRIMARY if i == 0 else None,
+                bgcolor=self._accent_bg if i == 0 else ft.Colors.WHITE,
+                color=self._accent_text if i == 0 else self._muted_text,
+                style=self._tab_button_style(selected=i == 0),
                 on_click=make_switch(i),
             )
             self._tab_buttons.append(btn)
 
-        self._tab_bar = ft.Row(self._tab_buttons, spacing=4, wrap=True)
+        self._tab_bar = ft.Container(
+            bgcolor=ft.Colors.WHITE,
+            border_radius=16,
+            border=ft.Border(
+                left=ft.BorderSide(1, self._panel_border),
+                right=ft.BorderSide(1, self._panel_border),
+                top=ft.BorderSide(1, self._panel_border),
+                bottom=ft.BorderSide(1, self._panel_border),
+            ),
+            padding=ft.Padding(left=6, top=6, right=6, bottom=6),
+            content=ft.Row(self._tab_buttons, spacing=6, wrap=True, run_spacing=6),
+        )
         self._tab_selector = ft.Dropdown(
             label="Sectie",
             value=self._tab_labels[0],
@@ -407,36 +471,39 @@ class CrossPlatformApp:
         self._tab_content_area = ft.Container(
             content=self._tab_contents[0],
             expand=True,
-            bgcolor=ft.Colors.BLUE_GREY_800,
+            bgcolor=self._panel_alt_bg,
+            border_radius=12,
+            padding=2,
         )
 
-        self.branding_logo = self._new_image(width=140, height=44, visible=False)
-        self.branding_title = ft.Text("Dakinspecties", size=24, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+        self.branding_logo = self._new_image(width=112, height=32, visible=False)
+        self.branding_title = ft.Text("Dakinspecties", size=self._page_title_size, weight=ft.FontWeight.BOLD)
 
         actions = ft.Row(
             [
                 self.rapport_type,
-                ft.Button("Bedrijfsprofiel opslaan", on_click=self._save_branding_action),
-                ft.Button("Nieuw", on_click=self.new_project),
-                ft.Button("Open project", on_click=self.open_project),
-                ft.Button("Opslaan project", on_click=self.save_project),
-                ft.Button("Genereer PDF", on_click=self.genereer_pdf, bgcolor=ft.Colors.PRIMARY, color=ft.Colors.ON_PRIMARY),
+                self._secondary_button("Bedrijfsprofiel opslaan", self._save_branding_action),
+                self._secondary_button("Nieuw", self.new_project),
+                self._secondary_button("Open project", self.open_project),
+                self._secondary_button("Opslaan project", self.save_project),
+                self._primary_button("Genereer PDF", self.genereer_pdf),
             ],
-            spacing=8,
+            spacing=6,
             wrap=True,
+            run_spacing=6,
         )
         header = ft.Column(
             [
                 ft.Row([self.branding_logo, self.branding_title], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 actions,
             ],
-            spacing=8,
+            spacing=6,
         )
 
         layout = ft.Column(
             [
                 header,
-                ft.Divider(height=4),
+                ft.Divider(height=2),
                 self._tab_bar,
                 self._tab_selector,
                 ft.Divider(height=2),
@@ -463,21 +530,21 @@ class CrossPlatformApp:
         ])
 
     def tab_instellingen(self):
-        self.branding_logo_preview = self._new_image(width=220, height=90, visible=False)
-        self.branding_name_preview = ft.Text("Dakinspecties", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
-        self.logo_path_status = ft.Text("", color=ft.Colors.GREY_400)
+        self.branding_logo_preview = self._new_image(width=180, height=72, visible=False)
+        self.branding_name_preview = ft.Text("Dakinspecties", size=16, weight=ft.FontWeight.BOLD)
+        self.logo_path_status = ft.Text("", color=self._muted_text)
         return self._tab_shell([
-            ft.Text("Bedrijfsprofiel", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            ft.Text("Bedrijfsprofiel", size=self._section_title_size, weight=ft.FontWeight.BOLD),
             self.company_name,
             self.company_logo,
             self.logo_path_status,
-            ft.Row([ft.Button("Kies logo", on_click=self._pick_company_logo)], wrap=True),
+            ft.Row([self._secondary_button("Kies logo", self._pick_company_logo)], wrap=True),
             ft.Row([
-                ft.Button("Opslaan", on_click=self._save_branding_action, bgcolor=ft.Colors.PRIMARY, color=ft.Colors.ON_PRIMARY),
-                ft.Button("Reset", on_click=self._reset_branding_action),
+                self._primary_button("Opslaan", self._save_branding_action),
+                self._secondary_button("Reset", self._reset_branding_action),
             ]),
-            ft.Divider(height=10),
-            ft.Text("Preview", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            ft.Divider(height=8),
+            ft.Text("Preview", weight=ft.FontWeight.BOLD, color=self._muted_text),
             self.branding_name_preview,
             self.branding_logo_preview,
         ])
@@ -498,8 +565,8 @@ class CrossPlatformApp:
         for idx, (title, oms, stat, foto) in enumerate(self.result_controls):
             sections.append(
                 ft.Container(
-                    padding=10,
-                    bgcolor=ft.Colors.BLUE_GREY_800,
+                    padding=self._compact_padding,
+                    bgcolor=self._panel_alt_bg,
                     border=ft.Border(
                         left=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
                         right=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT),
@@ -509,20 +576,20 @@ class CrossPlatformApp:
                     border_radius=8,
                     content=ft.Column(
                         [
-                            ft.Text(title, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                            ft.Text(title, weight=ft.FontWeight.BOLD),
                             oms,
                             stat,
                             ft.Row(
                                 [
                                     foto,
-                                    ft.Button(
+                                    self._secondary_button(
                                         "Kies foto",
-                                        on_click=self._make_pick_handler(foto),
+                                        self._make_pick_handler(foto),
                                     ),
                                 ]
                             ),
                         ],
-                        spacing=8,
+                        spacing=self._compact_spacing,
                     ),
                 )
             )
@@ -532,14 +599,14 @@ class CrossPlatformApp:
         self.extra_fotos_column = ft.Column(spacing=8)
         self._rebuild_extra_fotos_ui()
         return self._tab_shell([
-            ft.Row([self.foto1, ft.Button("Kies foto 1", on_click=self._make_pick_handler(self.foto1))]),
+            ft.Row([self.foto1, self._secondary_button("Kies foto 1", self._make_pick_handler(self.foto1))]),
             self.caption1,
-            ft.Row([self.foto2, ft.Button("Kies foto 2", on_click=self._make_pick_handler(self.foto2))]),
+            ft.Row([self.foto2, self._secondary_button("Kies foto 2", self._make_pick_handler(self.foto2))]),
             self.caption2,
-            ft.Divider(height=10),
-            ft.Text("Extra foto's", weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            ft.Divider(height=8),
+            ft.Text("Extra foto's", weight=ft.FontWeight.BOLD),
             self.extra_fotos_column,
-            ft.Button("+ Foto regel toevoegen", on_click=self._add_extra_foto_row),
+            self._secondary_button("+ Foto regel toevoegen", self._add_extra_foto_row),
         ])
 
     def _add_extra_foto_row(self, e=None, path="", caption=""):
@@ -569,8 +636,8 @@ class CrossPlatformApp:
             controls.extend([
                 ft.Row([
                     path,
-                    ft.Button("Kies foto", on_click=self._make_pick_handler(path)),
-                    ft.Button("Verwijder", on_click=make_remove()),
+                    self._secondary_button("Kies foto", self._make_pick_handler(path)),
+                    self._secondary_button("Verwijder", make_remove()),
                 ]),
                 caption,
                 ft.Divider(height=6),
@@ -627,7 +694,7 @@ class CrossPlatformApp:
     def tab_samenvatting(self):
         score_rows = []
         for name, ctrl in self.score_controls:
-            score_rows.append(ft.Row([ft.Text(name, expand=True, color=ft.Colors.WHITE), ctrl]))
+            score_rows.append(ft.Row([ft.Text(name, expand=True), ctrl]))
         return self._tab_shell([self.status_algemeen, self.samenvatting, ft.Divider(), *score_rows])
 
     def tab_conclusie(self):
