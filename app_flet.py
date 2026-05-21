@@ -94,7 +94,7 @@ class CrossPlatformApp:
 
         self._active_tab = 0
         self._mobile_breakpoint = 900
-        self._tab_labels = ["Algemeen", "Inspectieresultaten", "Foto's", "Samenvatting", "Conclusie", "Instellingen"]
+        self._tab_labels = ["Algemeen", "Inspectieresultaten", "Foto's", "Samenvatting", "Werkomschrijving", "Conclusie", "Instellingen"]
         self._branding = load_branding_settings(BASE_DIR)
 
         self.file_picker = ft.FilePicker()
@@ -227,11 +227,15 @@ class CrossPlatformApp:
         return self._write_fallback_bytes(filename, payload)
 
     def _switch_tab(self, idx: int):
+        if idx not in self._visible_tab_indices:
+            idx = self._visible_tab_indices[0]
         self._active_tab = idx
         for i, btn in enumerate(self._tab_buttons):
-            btn.bgcolor = self._accent_bg if i == idx else ft.Colors.WHITE
-            btn.color = self._accent_text if i == idx else self._muted_text
-            btn.style = self._tab_button_style(selected=i == idx)
+            selected = i == idx and i in self._visible_tab_indices
+            btn.visible = i in self._visible_tab_indices
+            btn.bgcolor = self._accent_bg if selected else ft.Colors.WHITE
+            btn.color = self._accent_text if selected else self._muted_text
+            btn.style = self._tab_button_style(selected=selected)
         self._tab_content_area.content = self._tab_contents[idx]
         if self._tab_selector.value != self._tab_labels[idx]:
             self._tab_selector.value = self._tab_labels[idx]
@@ -260,7 +264,9 @@ class CrossPlatformApp:
         try:
             idx = self._tab_labels.index(self._tab_selector.value)
         except ValueError:
-            idx = 0
+            idx = self._visible_tab_indices[0]
+        if idx not in self._visible_tab_indices:
+            idx = self._visible_tab_indices[0]
         self._switch_tab(idx)
 
     def _on_rapport_type_change(self, e):
@@ -270,13 +276,29 @@ class CrossPlatformApp:
 
     def _apply_rapport_type_labels(self):
         is_oplever = self.rapport_type.value == "Opleverrapport"
-        self.datum.label = "Datum oplevering" if is_oplever else "Datum inspectie"
-        self.operator.label = "Uitvoerder" if is_oplever else "Operator"
+        is_werkomschrijving = self.rapport_type.value == "Werkomschrijving"
+        
+        if is_werkomschrijving:
+            self.datum.label = "Datum werkzaamheden"
+            self.operator.label = "Aannemer"
+        elif is_oplever:
+            self.datum.label = "Datum oplevering"
+            self.operator.label = "Uitvoerder"
+        else:
+            self.datum.label = "Datum inspectie"
+            self.operator.label = "Operator"
+
+        # Show only relevant tabs for the selected report type.
+        self._visible_tab_indices = [0, 2, 4, 6] if is_werkomschrijving else [0, 1, 2, 3, 5, 6]
+        
         self._tab_labels[1] = "Opleverpunten" if is_oplever else "Inspectieresultaten"
         for i, btn in enumerate(self._tab_buttons):
             btn.content = self._tab_labels[i]
-        self._tab_selector.options = [ft.dropdown.Option(l) for l in self._tab_labels]
+        self._tab_selector.options = [ft.dropdown.Option(self._tab_labels[i]) for i in self._visible_tab_indices]
+        if self._active_tab not in self._visible_tab_indices:
+            self._active_tab = self._visible_tab_indices[0]
         self._tab_selector.value = self._tab_labels[self._active_tab]
+        self._switch_tab(self._active_tab)
 
     def _tab_shell(self, controls):
         return ft.Container(
@@ -349,6 +371,7 @@ class CrossPlatformApp:
             options=[
                 ft.dropdown.Option("Inspectierapport"),
                 ft.dropdown.Option("Opleverrapport"),
+                ft.dropdown.Option("Werkomschrijving"),
             ],
             width=self._dropdown_width,
             on_select=self._on_rapport_type_change,
@@ -421,14 +444,23 @@ class CrossPlatformApp:
         self.advies_middel = ft.TextField(label="Middellange termijn", multiline=True, min_lines=2, max_lines=4)
         self.advies_periodiek = ft.TextField(label="Periodiek onderhoud", multiline=True, min_lines=2, max_lines=4)
 
+        # Werkomschrijving fields
+        self.werkomschrijving_items = []
+        self.werkomschrijving_materials = []
+        self.werkzaamheden_notities = ft.TextField(label="Opmerkingen", multiline=True, min_lines=3, max_lines=6)
+        self.werkomschrijving_column = None
+        self.werkomschrijving_materials_column = None
+
         self._tab_contents = [
             self.tab_algemeen(),
             self.tab_resultaten(),
             self.tab_fotos(),
             self.tab_samenvatting(),
+            self.tab_werkomschrijving(),
             self.tab_conclusie(),
             self.tab_instellingen(),
         ]
+        self._visible_tab_indices = list(range(len(self._tab_contents)))
 
         self._tab_buttons = []
         for i, label in enumerate(self._tab_labels):
@@ -482,7 +514,6 @@ class CrossPlatformApp:
         actions = ft.Row(
             [
                 self.rapport_type,
-                self._secondary_button("Bedrijfsprofiel opslaan", self._save_branding_action),
                 self._secondary_button("Nieuw", self.new_project),
                 self._secondary_button("Open project", self.open_project),
                 self._secondary_button("Opslaan project", self.save_project),
@@ -515,7 +546,7 @@ class CrossPlatformApp:
         self.page.add(layout)
         self._apply_branding_ui()
         if not self._branding.setup_completed:
-            self.notify("Stel bij eerste gebruik bovenaan je bedrijfsnaam en logo in en klik op 'Bedrijfsprofiel opslaan'.")
+            self.notify("Stel bij eerste gebruik je bedrijfsnaam en logo in via het tabblad Instellingen.")
         self._apply_rapport_type_labels()
         self._apply_responsive_layout()
 
@@ -700,6 +731,126 @@ class CrossPlatformApp:
     def tab_conclusie(self):
         return self._tab_shell([self.advies_kort, self.advies_middel, self.advies_periodiek])
 
+    def tab_werkomschrijving(self):
+        """Tab for work description: tasks and materials."""
+        add_task_btn = self._primary_button("+ Taak toevoegen", self._add_task_row)
+        add_material_btn = self._primary_button("+ Materiaal toevoegen", self._add_material_row)
+        
+        self.werkomschrijving_column = ft.Column(spacing=self._compact_spacing, expand=True)
+        self.werkomschrijving_materials_column = ft.Column(spacing=self._compact_spacing, expand=True)
+        self._rebuild_werkomschrijving_ui()
+        self._rebuild_werkomschrijving_materials_ui()
+        
+        return self._tab_shell([
+            ft.Text("Werkzaamheden", size=self._section_title_size, weight=ft.FontWeight.BOLD),
+            add_task_btn,
+            ft.Container(
+                content=self.werkomschrijving_column,
+                height=250,
+                bgcolor=ft.Colors.BLUE_GREY_50,
+                border_radius=8,
+                padding=8,
+                border=ft.Border(left=ft.BorderSide(1, self._panel_border))
+            ),
+            ft.Divider(),
+            ft.Text("Materialen", size=self._section_title_size, weight=ft.FontWeight.BOLD),
+            add_material_btn,
+            ft.Container(
+                content=self.werkomschrijving_materials_column,
+                height=250,
+                bgcolor=ft.Colors.BLUE_GREY_50,
+                border_radius=8,
+                padding=8,
+                border=ft.Border(left=ft.BorderSide(1, self._panel_border))
+            ),
+            ft.Divider(),
+            ft.Text("Opmerkingen", size=self._section_title_size, weight=ft.FontWeight.BOLD),
+            self.werkzaamheden_notities,
+        ])
+
+    def _add_task_row(self, e):
+        """Add a new task row."""
+        self.werkomschrijving_items.append({"task": "", "description": "", "planning": ""})
+        self._rebuild_werkomschrijving_ui()
+
+    def _add_material_row(self, e):
+        """Add a new material row."""
+        self.werkomschrijving_materials.append({"material": "", "quantity": "", "unit": "", "notes": ""})
+        self._rebuild_werkomschrijving_materials_ui()
+
+    def _rebuild_werkomschrijving_ui(self):
+        """Rebuild the tasks table."""
+        if not self.werkomschrijving_column:
+            return
+        
+        rows = [
+            ft.Row([
+                ft.Text("Taak", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("Beschrijving", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("Planning", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("", width=40),
+            ], spacing=4)
+        ]
+        
+        for idx, item in enumerate(self.werkomschrijving_items):
+            task_field = ft.TextField(value=item.get("task", ""), label="", expand=True)
+            desc_field = ft.TextField(value=item.get("description", ""), label="", multiline=True, min_lines=1, max_lines=2, expand=True)
+            plan_field = ft.TextField(value=item.get("planning", ""), label="", expand=True)
+            delete_btn = ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=18, on_click=lambda e, i=idx: self._delete_task_row(i))
+            
+            task_field.on_change = lambda e, i=idx, f=task_field: self.werkomschrijving_items[i].update({"task": f.value})
+            desc_field.on_change = lambda e, i=idx, f=desc_field: self.werkomschrijving_items[i].update({"description": f.value})
+            plan_field.on_change = lambda e, i=idx, f=plan_field: self.werkomschrijving_items[i].update({"planning": f.value})
+            
+            rows.append(ft.Row([task_field, desc_field, plan_field, delete_btn], spacing=4))
+        
+        self.werkomschrijving_column.controls = rows
+        self.page.update()
+
+    def _delete_task_row(self, idx):
+        """Delete a task row."""
+        if 0 <= idx < len(self.werkomschrijving_items):
+            del self.werkomschrijving_items[idx]
+            self._rebuild_werkomschrijving_ui()
+
+    def _rebuild_werkomschrijving_materials_ui(self):
+        """Rebuild the materials table."""
+        if not hasattr(self, 'werkomschrijving_materials_column'):
+            self.werkomschrijving_materials_column = ft.Column(spacing=self._compact_spacing, expand=True)
+        
+        rows = [
+            ft.Row([
+                ft.Text("Materiaal", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("Hoevel.", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("Eenheid", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("Notities", weight=ft.FontWeight.BOLD, size=10),
+                ft.Text("", width=40),
+            ], spacing=4)
+        ]
+        
+        for idx, mat in enumerate(self.werkomschrijving_materials):
+            mat_field = ft.TextField(value=mat.get("material", ""), label="", expand=True)
+            qty_field = ft.TextField(value=mat.get("quantity", ""), label="", expand=True)
+            unit_field = ft.TextField(value=mat.get("unit", ""), label="", expand=True)
+            notes_field = ft.TextField(value=mat.get("notes", ""), label="", multiline=True, min_lines=1, max_lines=2, expand=True)
+            delete_btn = ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=18, on_click=lambda e, i=idx: self._delete_material_row(i))
+            
+            mat_field.on_change = lambda e, i=idx, f=mat_field: self.werkomschrijving_materials[i].update({"material": f.value})
+            qty_field.on_change = lambda e, i=idx, f=qty_field: self.werkomschrijving_materials[i].update({"quantity": f.value})
+            unit_field.on_change = lambda e, i=idx, f=unit_field: self.werkomschrijving_materials[i].update({"unit": f.value})
+            notes_field.on_change = lambda e, i=idx, f=notes_field: self.werkomschrijving_materials[i].update({"notes": f.value})
+            
+            rows.append(ft.Row([mat_field, qty_field, unit_field, notes_field, delete_btn], spacing=4))
+        
+        self.werkomschrijving_materials_column.controls = rows
+        self.page.update()
+
+    def _delete_material_row(self, idx):
+        """Delete a material row."""
+        if 0 <= idx < len(self.werkomschrijving_materials):
+            del self.werkomschrijving_materials[idx]
+            self._rebuild_werkomschrijving_materials_ui()
+
     async def pick_image_for(self, target: ft.TextField):
         files = await self._resolve_picker_result(
             self.file_picker.pick_files(allow_multiple=False)
@@ -742,6 +893,9 @@ class CrossPlatformApp:
             "advies_kort": self.advies_kort.value,
             "advies_middel": self.advies_middel.value,
             "advies_periodiek": self.advies_periodiek.value,
+            "werkomschrijving_items": self.werkomschrijving_items,
+            "werkomschrijving_materials": self.werkomschrijving_materials,
+            "werkzaamheden_notities": self.werkzaamheden_notities.value,
         }
 
     def _apply(self, data: dict):
@@ -786,6 +940,14 @@ class CrossPlatformApp:
         self.advies_kort.value = data.get("advies_kort", "")
         self.advies_middel.value = data.get("advies_middel", "")
         self.advies_periodiek.value = data.get("advies_periodiek", "")
+        
+        # Load werkomschrijving data
+        self.werkomschrijving_items = data.get("werkomschrijving_items", [])
+        self.werkomschrijving_materials = data.get("werkomschrijving_materials", [])
+        self.werkzaamheden_notities.value = data.get("werkzaamheden_notities", "")
+        self._rebuild_werkomschrijving_ui()
+        self._rebuild_werkomschrijving_materials_ui()
+        
         self.page.update()
 
     async def save_project(self, e=None):
@@ -867,6 +1029,11 @@ class CrossPlatformApp:
         self.advies_kort.value = ""
         self.advies_middel.value = ""
         self.advies_periodiek.value = ""
+        self.werkomschrijving_items = []
+        self.werkomschrijving_materials = []
+        self.werkzaamheden_notities.value = ""
+        self._rebuild_werkomschrijving_ui()
+        self._rebuild_werkomschrijving_materials_ui()
         self.page.update()
 
     async def genereer_pdf(self, e=None):
@@ -876,15 +1043,19 @@ class CrossPlatformApp:
             return
 
         is_oplever = self.rapport_type.value == "Opleverrapport"
-        prefix = "Opleverrapport" if is_oplever else "Inspectierapport"
+        is_werkomschrijving = self.rapport_type.value == "Werkomschrijving"
+        if is_werkomschrijving:
+            prefix = "Werkomschrijving"
+        elif is_oplever:
+            prefix = "Opleverrapport"
+        else:
+            prefix = "Inspectierapport"
         filename = f"{prefix}_{self.rapportnummer.value}.pdf"
         tmp_fd, tmp_path = tempfile.mkstemp(prefix="dakinspecties_", suffix=".pdf")
         os.close(tmp_fd)
         try:
-            if is_oplever:
-                self._build_pdf_oplever(tmp_path)
-            else:
-                self._build_pdf_inspectie(tmp_path)
+            payload = self._pdf_payload()
+            build_pdf_report(tmp_path, payload)
 
             if not self._verify_pdf_created(tmp_path):
                 self.notify("PDF controle mislukt: bestand ontbreekt of is leeg.")
@@ -909,6 +1080,7 @@ class CrossPlatformApp:
                     return
                 self.notify("PDF opslaan geannuleerd")
                 return
+            mark_used_rapportnummer(self.rapportnummer.value)
             self.notify(f"✅ PDF opgeslagen:\n{path}")
         except Exception as exc:
             if self._is_phone():
@@ -959,6 +1131,9 @@ class CrossPlatformApp:
             "advies_kort": self.advies_kort.value,
             "advies_middel": self.advies_middel.value,
             "advies_periodiek": self.advies_periodiek.value,
+            "werkomschrijving_items": self.werkomschrijving_items,
+            "werkomschrijving_materials": self.werkomschrijving_materials,
+            "werkzaamheden_notities": self.werkzaamheden_notities.value,
         }
 
     def _build_pdf_inspectie(self, filepath: str):

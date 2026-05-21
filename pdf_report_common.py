@@ -59,9 +59,10 @@ def build_pdf_report(filepath: str, data: dict[str, Any]) -> None:
 
     report_type = data.get("rapport_type", "Inspectierapport")
     is_oplever = report_type == "Opleverrapport"
-    date_label = "Datum oplevering" if is_oplever else "Datum inspectie"
-    operator_label = "Uitvoerder" if is_oplever else "Operator"
-    title = "Dak Opleverrapport" if is_oplever else "Drone Inspectierapport"
+    is_werkomschrijving = report_type == "Werkomschrijving"
+    date_label = "Datum oplevering" if is_oplever else ("Datum werkzaamheden" if is_werkomschrijving else "Datum inspectie")
+    operator_label = "Uitvoerder" if is_oplever else ("Aannemer" if is_werkomschrijving else "Operator")
+    title = "Dak Opleverrapport" if is_oplever else ("Werkzaamhedenomschrijving" if is_werkomschrijving else "Drone Inspectierapport")
 
     story = []
 
@@ -127,51 +128,99 @@ def build_pdf_report(filepath: str, data: dict[str, Any]) -> None:
     )
     story.extend([project_tbl, Spacer(1, 0.3 * cm)])
 
-    story.append(p("2. Inspectieresultaten" if not is_oplever else "2. Opleverpunten", h2))
-    story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
-    result_rows = [[p("Onderdeel", n_b), p("Status", n_b), p("Omschrijving", n_b)]]
-    for idx, row in enumerate(data.get("resultaten", []), start=1):
-        result_rows.append([
-            p(_normalize_result_title(idx, row.get("title"))),
-            p(row.get("status")),
-            p(row.get("omschrijving")),
-        ])
-    result_tbl = Table(result_rows, colWidths=[5.9 * cm, 3.2 * cm, usable_w - 9.1 * cm], repeatRows=1)
-    result_tbl.setStyle(
-        TableStyle(
-            [
+    # Section 2: varies by report type
+    if is_werkomschrijving:
+        story.append(p("2. Werkzaamheden & Materialen", h2))
+        story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
+
+        # Tasks section
+        tasks = data.get("werkomschrijving_items", [])
+        if tasks:
+            story.append(p("<b>Werkzaamheden:</b>", n_b))
+            task_rows = [[p("Taak", n_b), p("Beschrijving", n_b), p("Planning", n_b)]]
+            for item in tasks:
+                task_rows.append([
+                    p(item.get("task", "")),
+                    p(item.get("description", "")),
+                    p(item.get("planning", "")),
+                ])
+            task_tbl = Table(task_rows, colWidths=[3.5 * cm, usable_w - 7.2 * cm, 3.7 * cm], repeatRows=1)
+            task_tbl.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, grid),
                 ("BACKGROUND", (0, 0), (-1, 0), label_bg),
                 ("PADDING", (0, 0), (-1, -1), 6),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]
-        )
-    )
-    story.extend([result_tbl, Spacer(1, 0.25 * cm)])
+            ]))
+            story.extend([task_tbl, Spacer(1, 0.15 * cm)])
 
-    story.append(p("3. Samenvatting", h2))
-    story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
-    story.append(p(f"<b>Algemene status:</b> {data.get('status_algemeen', '-')}", n))
-    story.append(p(data.get("samenvatting"), n))
-    story.append(Spacer(1, 0.15 * cm))
-
-    score_rows = [[p("Onderdeel", n_b), p("Score", n_b)]]
-    for label, score in data.get("scores", []):
-        score_rows.append([p(label), p(score)])
-    score_tbl = Table(score_rows, colWidths=[usable_w - 3.2 * cm, 3.2 * cm], repeatRows=1)
-    score_tbl.setStyle(
-        TableStyle(
-            [
+        # Materials section
+        materials = data.get("werkomschrijving_materials", [])
+        if materials:
+            story.append(p("<b>Materialen:</b>", n_b))
+            mat_rows = [[p("Materiaal", n_b), p("Hoeveelheid", n_b), p("Eenheid", n_b), p("Notities", n_b)]]
+            for mat in materials:
+                mat_rows.append([
+                    p(mat.get("material", "")),
+                    p(mat.get("quantity", "")),
+                    p(mat.get("unit", "")),
+                    p(mat.get("notes", "")),
+                ])
+            mat_tbl = Table(mat_rows, colWidths=[4.0 * cm, 2.5 * cm, 2.0 * cm, usable_w - 8.5 * cm], repeatRows=1)
+            mat_tbl.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, grid),
                 ("BACKGROUND", (0, 0), (-1, 0), label_bg),
                 ("PADDING", (0, 0), (-1, -1), 6),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]
+            ]))
+            story.extend([mat_tbl, Spacer(1, 0.25 * cm)])
+    else:
+        story.append(p("2. Inspectieresultaten" if not is_oplever else "2. Opleverpunten", h2))
+        story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
+        result_rows = [[p("Onderdeel", n_b), p("Status", n_b), p("Omschrijving", n_b)]]
+        for idx, row in enumerate(data.get("resultaten", []), start=1):
+            result_rows.append([
+                p(_normalize_result_title(idx, row.get("title"))),
+                p(row.get("status")),
+                p(row.get("omschrijving")),
+            ])
+        result_tbl = Table(result_rows, colWidths=[5.9 * cm, 3.2 * cm, usable_w - 9.1 * cm], repeatRows=1)
+        result_tbl.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.5, grid),
+                    ("BACKGROUND", (0, 0), (-1, 0), label_bg),
+                    ("PADDING", (0, 0), (-1, -1), 6),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
         )
-    )
-    story.extend([score_tbl, Spacer(1, 0.3 * cm)])
+        story.extend([result_tbl, Spacer(1, 0.25 * cm)])
 
-    story.append(p("4. Fotobijlage", h2))
+    if not is_werkomschrijving:
+        story.append(p("3. Samenvatting", h2))
+        story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
+        story.append(p(f"<b>Algemene status:</b> {data.get('status_algemeen', '-')}", n))
+        story.append(p(data.get("samenvatting"), n))
+        story.append(Spacer(1, 0.15 * cm))
+
+        score_rows = [[p("Onderdeel", n_b), p("Score", n_b)]]
+        for label, score in data.get("scores", []):
+            score_rows.append([p(label), p(score)])
+        score_tbl = Table(score_rows, colWidths=[usable_w - 3.2 * cm, 3.2 * cm], repeatRows=1)
+        score_tbl.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.5, grid),
+                    ("BACKGROUND", (0, 0), (-1, 0), label_bg),
+                    ("PADDING", (0, 0), (-1, -1), 6),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        story.extend([score_tbl, Spacer(1, 0.3 * cm)])
+
+    photo_section_title = "3. Fotobijlage" if is_werkomschrijving else "4. Fotobijlage"
+    story.append(p(photo_section_title, h2))
     story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
     for i, photo in enumerate(data.get("foto_items", []), start=1):
         img_path = photo.get("path", "")
@@ -186,11 +235,16 @@ def build_pdf_report(filepath: str, data: dict[str, Any]) -> None:
         story.append(p(photo.get("caption")))
         story.append(Spacer(1, 0.12 * cm))
 
-    story.append(p("5. Conclusie en advies", h2))
-    story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
-    story.append(p(f"<b>Korte termijn:</b> {data.get('advies_kort', '-')}", n))
-    story.append(p(f"<b>Middellange termijn:</b> {data.get('advies_middel', '-')}", n))
-    story.append(p(f"<b>Periodiek onderhoud:</b> {data.get('advies_periodiek', '-')}", n))
+    if not is_werkomschrijving:
+        story.append(p("5. Conclusie en advies", h2))
+        story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
+        story.append(p(f"<b>Korte termijn:</b> {data.get('advies_kort', '-')}", n))
+        story.append(p(f"<b>Middellange termijn:</b> {data.get('advies_middel', '-')}", n))
+        story.append(p(f"<b>Periodiek onderhoud:</b> {data.get('advies_periodiek', '-')}", n))
+    else:
+        story.append(p("4. Algemene Opmerkingen", h2))
+        story.append(HRFlowable(width=usable_w, thickness=1, color=grid))
+        story.append(p(data.get("werkzaamheden_notities", "-"), n))
 
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
 

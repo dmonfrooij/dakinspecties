@@ -221,12 +221,14 @@ class DakInspectieApp:
         self.root.minsize(980, 680)
         self.root.resizable(True, True)
 
-        self._ui_bg = "#0f172a"
-        self._ui_card = "#273449"
-        self._ui_fg = "#e5e7eb"
-        self._ui_muted = "#d1d5db"
-        self._ui_accent = "#2563eb"
-        self._ui_border = "#475569"
+        # Light Material 3 theme (matching app_flet.py)
+        self._ui_bg = "#f5f5f5"          # Light gray background
+        self._ui_card = "#ffffff"        # White cards
+        self._ui_fg = "#1f2d3d"          # Dark text
+        self._ui_muted = "#7080a0"       # Muted gray-blue
+        self._ui_accent = "#2563eb"      # Blue accent
+        self._ui_border = "#e0e0e0"      # Light gray border
+        self._ui_label_bg = "#e9eef3"    # Very light blue-gray
 
         self._counter_file = os.path.join(os.path.dirname(__file__), "project_counter.json")
         self.default_rapportnummer = self._next_rapportnummer()
@@ -256,6 +258,10 @@ class DakInspectieApp:
         self.kaart_path: str | None = None   # gegenereerde kaartafbeelding
         self._kaart_tk_img = None            # tkinter PhotoImage referentie
         self._ai_tk_img = None
+        
+        # Werkomschrijving fields
+        self.werkomschrijving_items = []
+        self.werkomschrijving_materials = []
 
         self._build_ui()
         self._refresh_branding_ui()
@@ -419,12 +425,11 @@ class DakInspectieApp:
 
         tools = ttk.Frame(banner)
         tools.pack(side="right", padx=12, pady=6)
-        ttk.Button(tools, text="Bedrijf/Logo", command=self._open_branding_settings).pack(side="left", padx=(0, 8))
         ttk.Label(tools, text="Rapporttype:").pack(side="left", padx=(0, 6))
         self.rapport_type_combo = ttk.Combobox(
             tools,
             textvariable=self.rapport_type,
-            values=["Inspectierapport", "Opleverrapport"],
+            values=["Inspectierapport", "Opleverrapport", "Werkomschrijving"],
             state="readonly",
             width=18,
         )
@@ -448,6 +453,8 @@ class DakInspectieApp:
         self._tab_resultaten()
         self._tab_fotos()
         self._tab_samenvatting()
+        self._samenvatting_tab_index = 4  # Store for label updates
+        self._tab_werkomschrijving()
         self._tab_conclusie()
         self._tab_instellingen()
         self._apply_rapport_type_labels()
@@ -471,15 +478,65 @@ class DakInspectieApp:
 
     def _apply_rapport_type_labels(self):
         is_oplever = self.rapport_type.get() == "Opleverrapport"
-        self._banner_subtitle_var.set("Dak opleverrapport generator" if is_oplever else "Drone inspectierapport generator")
+        is_werkomschrijving = self.rapport_type.get() == "Werkomschrijving"
+        
+        if is_werkomschrijving:
+            subtitle = "Werkzaamheden & Materialen omschrijving"
+        elif is_oplever:
+            subtitle = "Dak opleverrapport generator"
+        else:
+            subtitle = "Drone inspectierapport generator"
+        
+        self._banner_subtitle_var.set(subtitle)
         self.root.title("Dakinspecties")
+        
         if hasattr(self, "_datum_label_var"):
-            self._datum_label_var.set("Datum Oplevering:" if is_oplever else "Datum Inspectie:")
+            if is_werkomschrijving:
+                self._datum_label_var.set("Datum Werkzaamheden:")
+            elif is_oplever:
+                self._datum_label_var.set("Datum Oplevering:")
+            else:
+                self._datum_label_var.set("Datum Inspectie:")
+        
         if hasattr(self, "_operator_label_var"):
-            self._operator_label_var.set("Uitvoerder:" if is_oplever else "Operator:")
+            if is_werkomschrijving:
+                self._operator_label_var.set("Aannemer:")
+            elif is_oplever:
+                self._operator_label_var.set("Uitvoerder:")
+            else:
+                self._operator_label_var.set("Operator:")
+        
         if hasattr(self, "nb") and self.nb.tabs():
-            self.nb.tab(2, text="Opleverpunten" if is_oplever else "Inspectieresultaten")
-            self.nb.tab(4, text="Opleverstatus" if is_oplever else "Samenvatting")
+            # Keep tab titles in sync.
+            if hasattr(self, "_tab_resultaten_frame"):
+                self.nb.tab(self._tab_resultaten_frame, text="Opleverpunten" if is_oplever else "Inspectieresultaten")
+            if hasattr(self, "_tab_samenvatting_frame"):
+                self.nb.tab(self._tab_samenvatting_frame, text="Opleverstatus" if is_oplever else "Samenvatting")
+
+            # Show only relevant tabs for selected report type.
+            inspectie_tabs = [
+                "_tab_ai_frame",
+                "_tab_resultaten_frame",
+                "_tab_samenvatting_frame",
+                "_tab_conclusie_frame",
+            ]
+            werkomschrijving_tabs = ["_tab_werkomschrijving_frame"]
+            for attr in inspectie_tabs:
+                if hasattr(self, attr):
+                    self.nb.tab(getattr(self, attr), state="hidden" if is_werkomschrijving else "normal")
+            if hasattr(self, "_tab_fotos_frame"):
+                self.nb.tab(self._tab_fotos_frame, state="normal")
+            for attr in werkomschrijving_tabs:
+                if hasattr(self, attr):
+                    self.nb.tab(getattr(self, attr), state="normal" if is_werkomschrijving else "hidden")
+
+            # Ensure selected tab stays visible after switching report type.
+            try:
+                current = self.nb.select()
+                if self.nb.tab(current, "state") == "hidden":
+                    self.nb.select(self._tab_algemeen_frame)
+            except Exception:
+                pass
 
     # ── Shared widget helpers ─────────────────────────────────────────────────
     def _row_entry(self, parent, label, row, default="", col=0, width=36, label_var=None):
@@ -520,43 +577,37 @@ class DakInspectieApp:
     # ── Tab 1: Algemeen & Klantgegevens ──────────────────────────────────────
     def _tab_algemeen(self):
         tab = tab_frame(self.nb, "Algemeen & Klant")
+        self._tab_algemeen_frame = tab
 
         self._section_label(tab, "Rapportgegevens", 0)
         self._separator(tab, 1)
-        self._bedrijf_naam_var = tk.StringVar(value=self._company_name())
-        tk.Label(tab, text="Bedrijfsnaam:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
-            row=2, column=0, sticky="w", padx=(12, 4), pady=4
-        )
-        ttk.Entry(tab, textvariable=self._bedrijf_naam_var, width=36).grid(row=2, column=1, sticky="w", padx=(0, 12), pady=4)
-        ttk.Button(tab, text="Opslaan bedrijf", command=self._save_bedrijf_from_tab).grid(row=2, column=2, sticky="w", padx=(12, 4), pady=4)
-        ttk.Button(tab, text="Kies logo", command=self._choose_logo_and_save).grid(row=2, column=3, sticky="w", padx=(0, 12), pady=4)
 
-        self.rapportnummer = self._row_entry(tab, "Rapportnummer:", 3, self.default_rapportnummer)
+        self.rapportnummer = self._row_entry(tab, "Rapportnummer:", 2, self.default_rapportnummer)
         tk.Label(tab, text="Rapporttype:", font=("Arial", 10), anchor="w", bg=self._ui_bg, fg=self._ui_fg).grid(
-            row=3, column=2, sticky="w", padx=(12, 4), pady=4
+            row=2, column=2, sticky="w", padx=(12, 4), pady=4
         )
         self.rapport_type_tab_combo = ttk.Combobox(
             tab,
             textvariable=self.rapport_type,
-            values=["Inspectierapport", "Opleverrapport"],
+            values=["Inspectierapport", "Opleverrapport", "Werkomschrijving"],
             state="readonly",
             width=22,
         )
-        self.rapport_type_tab_combo.grid(row=3, column=3, sticky="w", padx=(0, 12), pady=4)
+        self.rapport_type_tab_combo.grid(row=2, column=3, sticky="w", padx=(0, 12), pady=4)
         self.rapport_type_tab_combo.bind("<<ComboboxSelected>>", self._on_rapport_type_change)
         self._datum_label_var = tk.StringVar(value="Datum Inspectie:")
         self._operator_label_var = tk.StringVar(value="Operator:")
         self.datum = self._row_entry(
             tab,
             "Datum Inspectie:",
-            4,
+            3,
             date.today().strftime("%d %B %Y"),
             label_var=self._datum_label_var,
         )
-        self.operator = self._row_entry(tab, "Operator:", 5, label_var=self._operator_label_var)
+        self.operator = self._row_entry(tab, "Operator:", 4, label_var=self._operator_label_var)
 
-        self._section_label(tab, "Klant- & Projectgegevens", 6)
-        self._separator(tab, 7)
+        self._section_label(tab, "Klant- & Projectgegevens", 5)
+        self._separator(tab, 6)
 
         self.opdrachtgever = self._row_entry(tab, "Opdrachtgever:", 8)
         self.adres = self._row_entry(tab, "Adres:", 9)
@@ -600,7 +651,8 @@ class DakInspectieApp:
                                padx=12, pady=(4, 12), sticky="w")
 
     def _save_bedrijf_from_tab(self):
-        self.company_name_var.set((self._bedrijf_naam_var.get() or "").strip() or "Dakinspecties")
+        if hasattr(self, "_bedrijf_naam_var"):
+            self.company_name_var.set((self._bedrijf_naam_var.get() or "").strip() or "Dakinspecties")
         self._save_branding(completed=True)
         self._refresh_branding_ui()
 
@@ -625,6 +677,7 @@ class DakInspectieApp:
 
     def _tab_instellingen(self):
         tab = tab_frame(self.nb, "Instellingen")
+        self._tab_instellingen_frame = tab
 
         self._section_label(tab, "Bedrijfsprofiel", 0)
         self._separator(tab, 1)
@@ -666,6 +719,7 @@ class DakInspectieApp:
     # ── Tab 2: Samenvatting & Conditiescores ─────────────────────────────────
     def _tab_samenvatting(self):
         tab = tab_frame(self.nb, "Samenvatting")
+        self._tab_samenvatting_frame = tab
 
         self._section_label(tab, "Samenvatting & Conditiescore", 0)
         self._separator(tab, 1)
@@ -715,6 +769,7 @@ class DakInspectieApp:
     # ── Tab 3: Gedetailleerde Inspectieresultaten ─────────────────────────────
     def _tab_resultaten(self):
         tab = tab_frame(self.nb, "Inspectieresultaten")
+        self._tab_resultaten_frame = tab
 
         sections = [
             (self.resultaat_kopjes[0],
@@ -817,6 +872,7 @@ class DakInspectieApp:
     # ── Tab 4: Foto's ─────────────────────────────────────────────────────────
     def _tab_fotos(self):
         tab = tab_frame(self.nb, "Foto's")
+        self._tab_fotos_frame = tab
 
         self._section_label(tab, "Visuele Fotobijlage (Drone-opnames)", 0)
         self._separator(tab, 1)
@@ -927,6 +983,7 @@ class DakInspectieApp:
     # ── Tab 5: AI schadecheck ─────────────────────────────────────────────────
     def _tab_ai_schadecheck(self):
         tab = tab_frame(self.nb, "AI Schadecheck")
+        self._tab_ai_frame = tab
         tab.columnconfigure(0, weight=1)
 
         self._section_label(tab, "Automatische schade-inschatting (indicatief)", 0)
@@ -1579,6 +1636,26 @@ class DakInspectieApp:
                 "advies_middel": self._text_get(self.advies_middel),
                 "advies_periodiek": self._text_get(self.advies_periodiek),
             },
+            "werkomschrijving": {
+                "items": [
+                    {
+                        "task": item["task"].get(),
+                        "description": item["description"].get(),
+                        "planning": item["planning"].get(),
+                    }
+                    for item in self.werkomschrijving_items
+                ],
+                "materials": [
+                    {
+                        "material": mat["material"].get(),
+                        "quantity": mat["quantity"].get(),
+                        "unit": mat["unit"].get(),
+                        "notes": mat["notes"].get(),
+                    }
+                    for mat in self.werkomschrijving_materials
+                ],
+                "notities": self._text_get(self.werkzaamheden_notities),
+            },
         }
 
     def _apply_project_data(self, data):
@@ -1657,6 +1734,28 @@ class DakInspectieApp:
         self._text_set(self.advies_kort, con.get("advies_kort", self._text_get(self.advies_kort)))
         self._text_set(self.advies_middel, con.get("advies_middel", self._text_get(self.advies_middel)))
         self._text_set(self.advies_periodiek, con.get("advies_periodiek", self._text_get(self.advies_periodiek)))
+        
+        # Load werkomschrijving data
+        wk = data.get("werkomschrijving", {})
+        self.werkomschrijving_items = []
+        for item in wk.get("items", []):
+            self.werkomschrijving_items.append({
+                "task": tk.StringVar(value=item.get("task", "")),
+                "description": tk.StringVar(value=item.get("description", "")),
+                "planning": tk.StringVar(value=item.get("planning", "")),
+            })
+        self.werkomschrijving_materials = []
+        for mat in wk.get("materials", []):
+            self.werkomschrijving_materials.append({
+                "material": tk.StringVar(value=mat.get("material", "")),
+                "quantity": tk.StringVar(value=mat.get("quantity", "")),
+                "unit": tk.StringVar(value=mat.get("unit", "")),
+                "notes": tk.StringVar(value=mat.get("notes", "")),
+            })
+        self._text_set(self.werkzaamheden_notities, wk.get("notities", ""))
+        self._rebuild_werkomschrijving_items_ui()
+        self._rebuild_werkomschrijving_materials_ui()
+        
         self._apply_rapport_type_labels()
 
     def save_project(self):
@@ -1747,11 +1846,19 @@ class DakInspectieApp:
         self._text_set(self.advies_kort, "")
         self._text_set(self.advies_middel, "")
         self._text_set(self.advies_periodiek, "")
+        
+        self.werkomschrijving_items = []
+        self.werkomschrijving_materials = []
+        self._text_set(self.werkzaamheden_notities, "")
+        self._rebuild_werkomschrijving_items_ui()
+        self._rebuild_werkomschrijving_materials_ui()
+        
         self._apply_rapport_type_labels()
 
     # ── Tab 6: Conclusie & Advies ─────────────────────────────────────────────
     def _tab_conclusie(self):
         tab = tab_frame(self.nb, "Conclusie & Advies")
+        self._tab_conclusie_frame = tab
 
         self._section_label(tab, "Conclusie & Advies", 0)
         self._separator(tab, 1)
@@ -1770,6 +1877,117 @@ class DakInspectieApp:
             default=("Het handhaven van een jaarlijkse inspectie- en "
                      "reinigingscyclus om de levensduur van de dakbedekking "
                      "optimaal te waarborgen."))
+
+    def _tab_werkomschrijving(self):
+        """Werkomschrijving (Work Description) tab for tasks and materials."""
+        tab = tab_frame(self.nb, "Werkomschrijving")
+        self._tab_werkomschrijving_frame = tab
+        
+        self._section_label(tab, "Werkzaamheden & Materialen", 0)
+        self._separator(tab, 1)
+        
+        tk.Label(tab, text="Werkzaamheden:", font=("Arial", 10, "bold"), bg=self._ui_bg, fg=self._ui_fg).grid(row=2, column=0, sticky="w", columnspan=2, pady=(8, 2))
+        
+        self.werkomschrijving_items = []
+        self.werkomschrijving_items_container = tk.Frame(tab, bg=self._ui_bg)
+        self.werkomschrijving_items_container.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=2)
+        tab.rowconfigure(3, weight=0)
+        
+        tk.Button(tab, text="+ Taak toevoegen", bg=self._ui_accent, fg="white", 
+                 command=self._werkomschrijving_add_task, relief="flat", cursor="hand2").grid(row=4, column=0, sticky="w", padx=12, pady=4)
+        
+        tk.Label(tab, text="Materialen:", font=("Arial", 10, "bold"), bg=self._ui_bg, fg=self._ui_fg).grid(row=5, column=0, sticky="w", columnspan=2, pady=(12, 2))
+        
+        self.werkomschrijving_materials = []
+        self.werkomschrijving_materials_container = tk.Frame(tab, bg=self._ui_bg)
+        self.werkomschrijving_materials_container.grid(row=6, column=0, columnspan=2, sticky="nsew", pady=2)
+        tab.rowconfigure(6, weight=0)
+        
+        tk.Button(tab, text="+ Materiaal toevoegen", bg=self._ui_accent, fg="white",
+                 command=self._werkomschrijving_add_material, relief="flat", cursor="hand2").grid(row=7, column=0, sticky="w", padx=12, pady=4)
+        
+        tk.Label(tab, text="Opmerkingen:", font=("Arial", 10), bg=self._ui_bg, fg=self._ui_fg).grid(row=8, column=0, sticky="nw", padx=12, pady=(12, 4))
+        self.werkzaamheden_notities = tk.Text(tab, height=4, wrap="word", font=("Arial", 10), relief="solid", bd=1, bg=self._ui_card, fg=self._ui_fg, insertbackground=self._ui_fg)
+        self.werkzaamheden_notities.grid(row=8, column=1, sticky="nsew", pady=4, padx=12)
+        tab.rowconfigure(8, weight=1)
+        tab.columnconfigure(1, weight=1)
+
+    def _werkomschrijving_add_task(self):
+        """Add a new task row."""
+        task_dict = {"task": tk.StringVar(), "description": tk.StringVar(), "planning": tk.StringVar()}
+        self.werkomschrijving_items.append(task_dict)
+        self._rebuild_werkomschrijving_items_ui()
+
+    def _werkomschrijving_add_material(self):
+        """Add a new material row."""
+        mat_dict = {"material": tk.StringVar(), "quantity": tk.StringVar(), "unit": tk.StringVar(), "notes": tk.StringVar()}
+        self.werkomschrijving_materials.append(mat_dict)
+        self._rebuild_werkomschrijving_materials_ui()
+
+    def _rebuild_werkomschrijving_items_ui(self):
+        """Rebuild the tasks display."""
+        for widget in self.werkomschrijving_items_container.winfo_children():
+            widget.destroy()
+        
+        if not self.werkomschrijving_items:
+            tk.Label(self.werkomschrijving_items_container, text="Geen werkzaamheden toegevoegd", font=("Arial", 9, "italic"), bg=self._ui_bg, fg=self._ui_muted).pack()
+            return
+        
+        for idx, item in enumerate(self.werkomschrijving_items):
+            frame = tk.Frame(self.werkomschrijving_items_container, bg=self._ui_card, relief="solid", bd=1)
+            frame.pack(fill="x", padx=10, pady=4)
+            
+            tk.Label(frame, text="Taak:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=item["task"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=20).pack(side="left", padx=2, pady=4)
+            
+            tk.Label(frame, text="Beschrijving:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=item["description"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=30).pack(side="left", padx=2, pady=4, expand=True, fill="x")
+            
+            tk.Label(frame, text="Planning:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=item["planning"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=15).pack(side="left", padx=2, pady=4)
+            
+            tk.Button(frame, text="✕", bg="#ef4444", fg="white", font=("Arial", 9, "bold"), width=2, height=1, relief="flat",
+                     command=lambda i=idx: self._werkomschrijving_delete_task(i)).pack(side="left", padx=4, pady=4)
+
+    def _rebuild_werkomschrijving_materials_ui(self):
+        """Rebuild the materials display."""
+        for widget in self.werkomschrijving_materials_container.winfo_children():
+            widget.destroy()
+        
+        if not self.werkomschrijving_materials:
+            tk.Label(self.werkomschrijving_materials_container, text="Geen materialen toegevoegd", font=("Arial", 9, "italic"), bg=self._ui_bg, fg=self._ui_muted).pack()
+            return
+        
+        for idx, mat in enumerate(self.werkomschrijving_materials):
+            frame = tk.Frame(self.werkomschrijving_materials_container, bg=self._ui_card, relief="solid", bd=1)
+            frame.pack(fill="x", padx=10, pady=4)
+            
+            tk.Label(frame, text="Materiaal:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=mat["material"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=20).pack(side="left", padx=2, pady=4)
+            
+            tk.Label(frame, text="Hoev.", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=mat["quantity"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=10).pack(side="left", padx=2, pady=4)
+            
+            tk.Label(frame, text="Eenheid:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=mat["unit"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=10).pack(side="left", padx=2, pady=4)
+            
+            tk.Label(frame, text="Notities:", font=("Arial", 9), bg=self._ui_card, fg=self._ui_fg).pack(side="left", padx=6, pady=4)
+            tk.Entry(frame, textvariable=mat["notes"], font=("Arial", 9), bg=self._ui_bg, fg=self._ui_fg, width=25).pack(side="left", padx=2, pady=4, expand=True, fill="x")
+            
+            tk.Button(frame, text="✕", bg="#ef4444", fg="white", font=("Arial", 9, "bold"), width=2, height=1, relief="flat",
+                     command=lambda i=idx: self._werkomschrijving_delete_material(i)).pack(side="left", padx=4, pady=4)
+
+    def _werkomschrijving_delete_task(self, idx):
+        """Delete a task row."""
+        if 0 <= idx < len(self.werkomschrijving_items):
+            del self.werkomschrijving_items[idx]
+            self._rebuild_werkomschrijving_items_ui()
+
+    def _werkomschrijving_delete_material(self, idx):
+        """Delete a material row."""
+        if 0 <= idx < len(self.werkomschrijving_materials):
+            del self.werkomschrijving_materials[idx]
+            self._rebuild_werkomschrijving_materials_ui()
 
     # ─────────────────────────────────────────────────────────────────────────
     # PDF Generation
@@ -1792,7 +2010,13 @@ class DakInspectieApp:
 
     def genereer_pdf(self):
         is_oplever = self.rapport_type.get() == "Opleverrapport"
-        prefix = "Opleverrapport" if is_oplever else "Inspectierapport"
+        is_werkomschrijving = self.rapport_type.get() == "Werkomschrijving"
+        if is_werkomschrijving:
+            prefix = "Werkomschrijving"
+        elif is_oplever:
+            prefix = "Opleverrapport"
+        else:
+            prefix = "Inspectierapport"
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF bestanden", "*.pdf")],
@@ -1849,6 +2073,24 @@ class DakInspectieApp:
             "advies_kort": self._text_get(self.advies_kort),
             "advies_middel": self._text_get(self.advies_middel),
             "advies_periodiek": self._text_get(self.advies_periodiek),
+            "werkomschrijving_items": [
+                {
+                    "task": item["task"].get(),
+                    "description": item["description"].get(),
+                    "planning": item["planning"].get(),
+                }
+                for item in self.werkomschrijving_items
+            ],
+            "werkomschrijving_materials": [
+                {
+                    "material": mat["material"].get(),
+                    "quantity": mat["quantity"].get(),
+                    "unit": mat["unit"].get(),
+                    "notes": mat["notes"].get(),
+                }
+                for mat in self.werkomschrijving_materials
+            ],
+            "werkzaamheden_notities": self._text_get(self.werkzaamheden_notities),
         }
         build_pdf_report(filepath, payload)
 
